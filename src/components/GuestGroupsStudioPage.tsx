@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Crown, Tag, Ticket, Users } from 'lucide-react';
+import { Crown, Ticket, UserPlus, Users } from 'lucide-react';
 import type { CustomerRecord, DashboardSnapshot } from '../types';
 import {
   applyPlaceholders,
@@ -27,7 +27,7 @@ const CLUSTER_ICONS: Record<number, typeof Ticket> = {
   0: Ticket,
   1: Crown,
   2: Users,
-  3: Tag,
+  3: UserPlus,
 };
 
 export function GuestGroupsStudioPage({
@@ -131,7 +131,6 @@ export function GuestGroupsStudioPage({
         })}
       </div>
 
-      {/* Personalized Campaign Studio — Exact Single-Screen Format */}
       <section className="surface-card studio-panel" data-cluster={selectedClusterId}>
         <div className="studio-top">
           <div>
@@ -166,7 +165,6 @@ export function GuestGroupsStudioPage({
           </div>
         </div>
 
-        {/* 2 Message Options */}
         <div className="template-cards-grid">
           {templates.map((tpl, idx) => {
             const isSel = idx === selectedTemplateIdx;
@@ -183,7 +181,6 @@ export function GuestGroupsStudioPage({
                 <div className="template-card-top">
                   <div className="template-badge-group">
                     <span className="template-badge">{tpl.badge}</span>
-                    {tpl.coupon && <span className="coupon-pill">Code: {tpl.coupon}</span>}
                   </div>
                   <span className="radio-circle">{isSel ? '✓' : ''}</span>
                 </div>
@@ -194,22 +191,15 @@ export function GuestGroupsStudioPage({
           })}
         </div>
 
-        {/* Clean Single-Screen Preview Box */}
         <div className="preview-box">
           <div className="preview-top">
             <div className="preview-doc-meta">
               <span className="doc-tag">
                 Guest: <strong>{sampleGuest ? sampleGuest.customer_name : '—'}</strong>
               </span>
-              {activeTpl.coupon ? (
-                <span className="doc-tag">
-                  Coupon: <strong>{activeTpl.coupon}</strong>
-                </span>
-              ) : (
-                <span className="doc-tag">
-                  Style: <strong>VIP Hospitality (No Offers)</strong>
-                </span>
-              )}
+              <span className="doc-tag">
+                Style: <strong>{activeTpl.badge}</strong>
+              </span>
             </div>
             <div className="preview-btn-group">
               <button
@@ -260,9 +250,7 @@ export function GuestGroupsStudioPage({
               disabled={clusterMembers.length === 0}
               onClick={() =>
                 onLaunchSimulatedCampaign({
-                  campaign_name: `${activeProfile?.cluster_name || cfg.name} · ${
-                    activeTpl.coupon || activeTpl.badge
-                  }`,
+                  campaign_name: `${activeProfile?.cluster_name || cfg.name} · ${activeTpl.badge}`,
                   campaign_type: 'cluster',
                   cluster_id: selectedClusterId,
                   cluster_name: activeProfile?.cluster_name || cfg.name,
@@ -272,7 +260,7 @@ export function GuestGroupsStudioPage({
                 })
               }
             >
-              Send to Group ( {clusterMembers.length} Guests)
+              Send to Group ({clusterMembers.length} Guests)
             </button>
           </div>
         </div>

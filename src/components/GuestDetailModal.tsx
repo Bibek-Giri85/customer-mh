@@ -40,12 +40,9 @@ export function GuestDetailModal({
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
-  const [editAge, setEditAge] = useState('');
-  const [editDob, setEditDob] = useState('');
   const [editVisits, setEditVisits] = useState('1');
   const [editTotalSpend, setEditTotalSpend] = useState('0');
   const [editDish, setEditDish] = useState('');
-  const [editRating, setEditRating] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
 
   useEffect(() => {
@@ -56,16 +53,9 @@ export function GuestDetailModal({
     if (customer) {
       setEditName(customer.customer_name);
       setEditPhone(customer.contact_no);
-      setEditAge(customer.age !== null && customer.age !== undefined ? String(customer.age) : '');
-      setEditDob(customer.dob || '');
       setEditVisits(String(customer.total_visits));
       setEditTotalSpend(String(customer.total_spend_inr));
       setEditDish(customer.most_ordered_dish || '');
-      setEditRating(
-        customer.avg_rating_given !== null && customer.avg_rating_given !== undefined
-          ? String(customer.avg_rating_given)
-          : ''
-      );
     }
   }, [customer]);
 
@@ -102,12 +92,9 @@ export function GuestDetailModal({
         customer_id: customer.customer_id,
         customer_name: editName.trim() || customer.customer_name,
         contact_no: editPhone.trim() || customer.contact_no,
-        age: editAge.trim() ? Number(editAge) : null,
-        dob: editDob.trim() || null,
         total_visits: Math.max(1, Number(editVisits) || 1),
         total_spend_inr: Math.max(0, Number(editTotalSpend) || 0),
         most_ordered_dish: editDish.trim() || null,
-        avg_rating_given: editRating.trim() ? Number(editRating) : null,
       });
       setIsEditingProfile(false);
     } finally {
@@ -129,7 +116,6 @@ export function GuestDetailModal({
           &times;
         </button>
 
-        {/* Clean Header */}
         <div className="modal-header">
           <div className="modal-avatar" style={{ backgroundColor: clusterPalette.main }}>
             {getInitials(customer.customer_name)}
@@ -164,17 +150,15 @@ export function GuestDetailModal({
               <span>•</span>
               <span className="modal-phone-text">{formatPhone(customer.contact_no)}</span>
               <span>•</span>
-              <span>
-                {customer.area || 'Kolkata'} • {customer.age ? `${customer.age} yrs` : 'Age N/A'} •{' '}
-                {customer.gender}
-              </span>
+              <span>{customer.preferred_order_channel || 'Dine-In'}</span>
               <span>•</span>
-              <span>DOB: {customer.dob || 'Not Recorded'}</span>
+              <span>First Visit: {customer.first_visit_date}</span>
+              <span>•</span>
+              <span>Last Visit: {customer.last_visit_date}</span>
             </div>
           </div>
         </div>
 
-        {/* Edit Details Form */}
         {isEditingProfile && (
           <form onSubmit={handleSaveProfile} className="guest-edit-form">
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -191,7 +175,7 @@ export function GuestDetailModal({
                 </strong>
               </span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
               <div>
                 <label className="guest-field-label">Name</label>
                 <input
@@ -210,24 +194,6 @@ export function GuestDetailModal({
                   className="field-input w-full"
                   value={editPhone}
                   onChange={(e) => setEditPhone(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="guest-field-label">Age</label>
-                <input
-                  type="number"
-                  className="field-input w-full"
-                  value={editAge}
-                  onChange={(e) => setEditAge(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="guest-field-label">DOB</label>
-                <input
-                  type="date"
-                  className="field-input w-full"
-                  value={editDob}
-                  onChange={(e) => setEditDob(e.target.value)}
                 />
               </div>
               <div>
@@ -259,18 +225,6 @@ export function GuestDetailModal({
                   onChange={(e) => setEditDish(e.target.value)}
                 />
               </div>
-              <div>
-                <label className="guest-field-label">Rating (1–5)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min={1}
-                  max={5}
-                  className="field-input w-full"
-                  value={editRating}
-                  onChange={(e) => setEditRating(e.target.value)}
-                />
-              </div>
             </div>
             <div className="flex justify-end gap-2">
               <button
@@ -288,7 +242,6 @@ export function GuestDetailModal({
         )}
 
         <div className="modal-split-body">
-          {/* LEFT COLUMN: Simple Guest Summary & Preferences (No charts/bars) */}
           <div className="space-y-3">
             <div className="modal-stats-grid" style={{ marginBottom: 0 }}>
               <div className="stat-tile">
@@ -305,10 +258,10 @@ export function GuestDetailModal({
                 <span className="tile-label">Total Spend</span>
                 <strong className="tile-val">{formatINR(customer.total_spend_inr)}</strong>
                 <small className="tile-sub">
-                  Rating:{' '}
-                  {customer.avg_rating_given !== null && customer.avg_rating_given !== undefined
-                    ? `${customer.avg_rating_given} / 5`
-                    : 'N/A'}
+                  Interval:{' '}
+                  {customer.expected_visit_gap > 0
+                    ? `Every ${customer.expected_visit_gap}d`
+                    : 'Single Visit'}
                 </small>
               </div>
             </div>
@@ -321,7 +274,7 @@ export function GuestDetailModal({
                   <strong>{customer.most_ordered_dish || 'Not recorded yet'}</strong>
                 </div>
                 <div className="guest-pref-row">
-                  <span>Top Category</span>
+                  <span>Top Food Category</span>
                   <strong>{customer.top_food_category || 'General'}</strong>
                 </div>
                 <div className="guest-pref-row">
@@ -331,14 +284,18 @@ export function GuestDetailModal({
                   </strong>
                 </div>
                 <div className="guest-pref-row">
-                  <span>Discount Usage</span>
-                  <strong>{Math.round((customer.discount_rate || 0) * 100)}% of visits</strong>
+                  <span>Service Mode</span>
+                  <strong>{customer.preferred_order_channel || 'Dine-In'}</strong>
                 </div>
               </div>
             </div>
 
             <div className="guest-reason-box">
-              <Sparkles size={15} className="shrink-0 mt-0.5" style={{ color: clusterPalette.main }} />
+              <Sparkles
+                size={15}
+                className="shrink-0 mt-0.5"
+                style={{ color: clusterPalette.main }}
+              />
               <div>
                 <strong>Why this group: </strong>
                 <span>{insights.reason}</span>
@@ -346,7 +303,6 @@ export function GuestDetailModal({
             </div>
           </div>
 
-          {/* RIGHT COLUMN: Staff Tip + Recommended Offer + Easy SMS Composer */}
           <div className="modal-right-col">
             <div className="staff-tip-box">
               <div className="flex items-start gap-2.5">
@@ -355,7 +311,10 @@ export function GuestDetailModal({
                 </span>
                 <div>
                   <span className="staff-tip-eyebrow">STAFF HOSPITALITY TIP</span>
-                  <p className="text-xs mt-0.5 leading-relaxed" style={{ color: 'var(--text-dark)' }}>
+                  <p
+                    className="text-xs mt-0.5 leading-relaxed"
+                    style={{ color: 'var(--text-dark)' }}
+                  >
                     {insights.staffTip}
                   </p>
                 </div>
@@ -364,14 +323,7 @@ export function GuestDetailModal({
 
             <div className="recommended-offer-box">
               <div className="rec-top-row">
-                <span className="rec-eyebrow">
-                  {customer.cluster_id === 1 ? 'VIP HOSPITALITY INVITE' : 'RECOMMENDED FOOD OFFER'}
-                </span>
-                {offer.coupon ? (
-                  <span className="coupon-pill">CODE: {offer.coupon}</span>
-                ) : (
-                  <span className="coupon-pill">No Coupons (VIP)</span>
-                )}
+                <span className="rec-eyebrow">RECOMMENDED INVITATION</span>
               </div>
               <h3>{offer.offerTitle}</h3>
               <p>{offer.reason}</p>
@@ -451,7 +403,7 @@ export function GuestDetailModal({
                         customer,
                         message: activeMessage,
                         language: modalLang,
-                        coupon: offer.coupon,
+                        coupon: null,
                       })
                     }
                   >

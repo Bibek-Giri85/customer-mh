@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowRight,
-  Cake,
   IndianRupee,
   Lock,
   MessageSquare,
@@ -22,15 +22,15 @@ const REVENUE_UNLOCK_SECONDS = 10;
 const CLUSTER_COLORS: Record<number, string> = {
   0: '#ab6446',
   1: '#0284c7',
-  2: '#f59e0b',
-  3: '#7c3aed',
+  2: '#d97706',
+  3: '#0d9488',
 };
 
 const SHORT_NAMES: Record<number, string> = {
   0: 'Frequent',
   1: 'Premium',
   2: 'Family',
-  3: 'Coupon',
+  3: 'Occasional',
 };
 
 export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPageProps) {
@@ -127,16 +127,15 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
 
   return (
     <div className="tab-animate space-y-4">
-      <div className="hero-row" style={{ marginBottom: 28 }}>
+      <div className="hero-row" style={{ marginBottom: 24 }}>
         <div>
           <h1>Restaurant Overview</h1>
           <p className="hero-subtitle">
-            Key metrics across protected revenue, total orders, birthdays under 7 days, delivered messages, and guest group share.
+            Live analytics across protected revenue, total orders, overdue guest alerts, delivered messages, and guest group distribution.
           </p>
         </div>
       </div>
 
-      {/* 4 Large Outer Containers Moved Aside Around the Interactive Center Pie Chart */}
       <div className="overview-hub-grid">
         {/* Top-Left: Total Revenue */}
         <button
@@ -167,13 +166,13 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
             <span>
               {revenueUnlocked
                 ? `Auto-hides in ${secondsLeft}s · Click to hide`
-                : 'Protected by manager password'}
+                : 'Protected · Click to unlock (Tester PIN: 2004)'}
             </span>
             <ArrowRight size={15} />
           </div>
         </button>
 
-        {/* Center Hub: Interactive Round Pie Chart */}
+        {/* Center Hub: Interactive Round Pie Chart (4 Segments) */}
         <section
           className="overview-pie-hub"
           aria-label="Customer Group Share Pie Chart"
@@ -183,7 +182,7 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
             <span className="kpi-label" style={{ color: 'var(--brand)' }}>
               GUEST DISTRIBUTION
             </span>
-            <span className="text-xs font-medium text-slate-500">
+            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
               {metrics.cluster_count} Groups
             </span>
           </div>
@@ -193,7 +192,7 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
               viewBox="0 0 240 240"
               className="w-full h-full overflow-visible"
               role="img"
-              aria-label="Interactive pie chart showing percentage occupied by each customer segment"
+              aria-label="Interactive pie chart showing percentage occupied by each customer group"
             >
               {pieSlices.map((slice) => {
                 const isHovered = hoveredCid === slice.cluster_id;
@@ -222,7 +221,7 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
                       stroke="#ffffff"
                       strokeWidth={2.5}
                     />
-                    {slice.customer_share_pct >= 9 && (
+                    {slice.customer_share_pct >= 8 && (
                       <text
                         x={slice.labelX}
                         y={slice.labelY}
@@ -254,22 +253,24 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
                   >
                     {activeSlice.customer_share_pct}%
                   </span>
-                  <span className="text-[11px] font-semibold text-zinc-900 mt-1.5 leading-tight">
+                  <span className="text-[11px] font-semibold mt-1.5 leading-tight" style={{ color: 'var(--text-dark)' }}>
                     {activeSlice.cluster_name}
                   </span>
-                  <span className="text-[10.5px] text-slate-500 mt-0.5">
+                  <span className="text-[10.5px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                     {activeSlice.customer_count.toLocaleString()} guests
                   </span>
                 </>
               ) : (
                 <>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-soft)' }}>
                     Total Guests
                   </span>
-                  <span className="text-2xl font-semibold text-zinc-900 leading-tight mt-0.5">
+                  <span className="text-2xl font-semibold leading-tight mt-0.5" style={{ color: 'var(--text-dark)' }}>
                     {metrics.total_customers.toLocaleString()}
                   </span>
-                  <span className="text-[11px] text-slate-500 mt-0.5">Hover a slice</span>
+                  <span className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                    Hover a slice
+                  </span>
                 </>
               )}
             </div>
@@ -293,7 +294,9 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
                       className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ background: slice.color }}
                     />
-                    <span className="font-medium text-zinc-800 truncate">{slice.shortName}</span>
+                    <span className="font-medium truncate" style={{ color: 'var(--text-dark)' }}>
+                      {slice.shortName}
+                    </span>
                   </span>
                   <strong style={{ color: slice.color }}>{slice.customer_share_pct}%</strong>
                 </button>
@@ -328,14 +331,14 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
           </div>
         </button>
 
-        {/* Bottom-Left: Birthday Under 7 Days */}
+        {/* Bottom-Left: High Alert Guests */}
         <button
           type="button"
           className="overview-stat-card accent-brand overview-card-bl"
-          onClick={() => onNavigate('birthday')}
+          onClick={() => onNavigate('alerts')}
         >
           <div className="overview-card-top">
-            <span className="kpi-label">BIRTHDAY UNDER 7 DAYS</span>
+            <span className="kpi-label">HIGH ALERT GUESTS</span>
             <span
               className="overview-icon-box"
               style={{
@@ -344,14 +347,14 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
                 border: '1px solid var(--brand-border)',
               }}
             >
-              <Cake size={19} />
+              <AlertTriangle size={19} />
             </span>
           </div>
           <div className="overview-card-val" style={{ color: 'var(--brand)' }}>
-            {metrics.upcoming_birthdays_7d.toLocaleString()}
+            {metrics.high_alerts_remaining.toLocaleString()}
           </div>
           <div className="overview-card-sub">
-            <span>Send advance birthday SMS</span>
+            <span>Overdue guests needing follow-up</span>
             <ArrowRight size={15} />
           </div>
         </button>
@@ -404,19 +407,24 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
                 setSecondsLeft(REVENUE_UNLOCK_SECONDS);
                 setShowPinModal(false);
               } else {
-                setPinError('Incorrect password');
+                setPinError('Incorrect password (use 2004)');
               }
             }}
           >
-            <h3 className="text-sm font-semibold text-zinc-900 mb-0.5">Enter Password</h3>
-            <p className="text-xs text-slate-500 mb-3">
-              Enter manager password to view revenue (auto-hides after 10 seconds).
+            <h3 className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-dark)' }}>
+              Enter Password
+            </h3>
+            <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+              Enter manager password to view revenue (auto-hides in 10s).
             </p>
+            <div className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg mb-2.5" style={{ background: 'var(--gold-soft)', color: 'var(--brand)', border: '1px solid var(--border)' }}>
+              Tester Password: <strong>2004</strong>
+            </div>
             <input
               type="password"
               autoFocus
-              className="w-full text-sm tracking-widest px-3 py-2 border border-slate-300 rounded-lg outline-none mb-1.5"
-              placeholder="••••"
+              className="field-input w-full text-sm tracking-widest mb-1.5"
+              placeholder="2004"
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value)}
             />

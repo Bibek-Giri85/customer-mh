@@ -111,7 +111,7 @@ export function AlertsPage({
         <div>
           <h1>Guest Alerts</h1>
           <p className="hero-subtitle">
-            Click any guest to send a personalized SMS, or message all unsent guests in one click.
+            Click any guest to send a personalized welcome-back SMS, or message all unsent guests in one click.
           </p>
         </div>
 
@@ -134,7 +134,7 @@ export function AlertsPage({
           </span>
           <div className="kpi-col">
             <span className="kpi-label kpi-label-red">
-              {revenueUnlocked ? `POTENTIAL REVENUE (${secondsLeft}s)` : 'POTENTIAL REVENUE'}
+              {revenueUnlocked ? `POTENTIAL REVENUE (${secondsLeft}s)` : 'POTENTIAL REVENUE (PIN: 2004)'}
             </span>
             <strong className="kpi-val text-red-dark">
               {revenueUnlocked ? formatINR(totalPotentialRevenue) : '* ₹'}
@@ -273,15 +273,7 @@ export function AlertsPage({
                   {isSent && <span className="ac-pill-sent">✓ Sent</span>}
                 </div>
 
-                <div className="ac-offer-preview">
-                  {offer.offerTitle}
-                  {offer.coupon && (
-                    <>
-                      {' '}
-                      · <strong className="hl-coupon">{offer.coupon}</strong>
-                    </>
-                  )}
-                </div>
+                <div className="ac-offer-preview">{offer.offerTitle}</div>
 
                 <div className="ac-bottom">
                   <span>
@@ -346,21 +338,24 @@ export function AlertsPage({
                 setSecondsLeft(10);
                 setShowPinModal(false);
               } else {
-                setPinError('Incorrect password');
+                setPinError('Incorrect password (use 2004)');
               }
             }}
           >
             <h3 className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-dark)' }}>
               Enter Password
             </h3>
-            <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+            <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
               Enter manager password to view revenue (auto-hides in 10s).
             </p>
+            <div className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg mb-2.5" style={{ background: 'var(--gold-soft)', color: 'var(--brand)', border: '1px solid var(--border)' }}>
+              Tester Password: <strong>2004</strong>
+            </div>
             <input
               type="password"
               autoFocus
               className="field-input w-full text-sm tracking-widest mb-1.5"
-              placeholder="••••"
+              placeholder="2004"
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value)}
             />

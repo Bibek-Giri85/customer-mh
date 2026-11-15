@@ -44,25 +44,24 @@ export function CustomersPage({ snapshot, onInspectCustomer }: CustomersPageProp
         <div>
           <h1>Guest Directory</h1>
           <p className="hero-subtitle">
-            Complete guest records across all 25 customer intelligence fields. Click any guest to inspect details or send an SMS.
+            Complete guest profiles with spending, favourite dishes, visit timing, and customer groups from your orders database.
           </p>
         </div>
 
-        <div className="surface-card px-3.5 py-2 flex items-center gap-2 text-xs font-medium text-slate-700">
+        <div className="surface-card px-3.5 py-2 flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--text-body)' }}>
           <Users size={13} style={{ color: 'var(--brand)' }} />
           <span>{snapshot.customers.length.toLocaleString()} Active Guests</span>
         </div>
       </div>
 
-      {/* Filter Bar + Tiles / List Switcher */}
       <div className="surface-card alert-toolbar">
         <div className="alert-filter-bar">
-          <div className="relative">
+          <div className="relative flex-1 min-w-[220px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
-              className="field-input"
-              style={{ paddingLeft: 30, minWidth: 230 }}
+              className="field-input w-full"
+              style={{ paddingLeft: 30 }}
               placeholder="Search name, phone, ID, dish..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -83,8 +82,8 @@ export function CustomersPage({ snapshot, onInspectCustomer }: CustomersPageProp
         </div>
 
         <div className="alert-right-controls">
-          <span className="text-xs text-slate-500">
-            Showing <strong className="text-zinc-900">{filtered.length.toLocaleString()}</strong> guests
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            Showing <strong style={{ color: 'var(--text-dark)' }}>{filtered.length.toLocaleString()}</strong> guests
           </span>
 
           <div className="view-toggle-group" role="group" aria-label="View format">
@@ -113,23 +112,23 @@ export function CustomersPage({ snapshot, onInspectCustomer }: CustomersPageProp
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold whitespace-nowrap">
+                <tr className="bg-[#fcf5e8] border-b border-[#e5cfb0] text-[#5b2e33] font-semibold whitespace-nowrap">
                   <th className="py-3 px-3.5">Customer ID</th>
                   <th className="py-3 px-3">Name</th>
                   <th className="py-3 px-3">Contact</th>
-                  <th className="py-3 px-3">Age</th>
-                  <th className="py-3 px-3">DOB</th>
+                  <th className="py-3 px-3">Visits</th>
                   <th className="py-3 px-3">Total Spend</th>
                   <th className="py-3 px-3">Avg / Visit</th>
                   <th className="py-3 px-3">Fav Dish</th>
-                  <th className="py-3 px-3">Rating</th>
-                  <th className="py-3 px-3.5">Cluster Type</th>
+                  <th className="py-3 px-3">Days Since Visit</th>
+                  <th className="py-3 px-3">Visit Interval</th>
+                  <th className="py-3 px-3.5">Customer Group</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-[#f2e5d2]">
                 {pageItems.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-8 text-center text-slate-500">
+                    <td colSpan={10} className="py-8 text-center" style={{ color: 'var(--text-muted)' }}>
                       No guests match your filter.
                     </td>
                   </tr>
@@ -137,29 +136,35 @@ export function CustomersPage({ snapshot, onInspectCustomer }: CustomersPageProp
                   pageItems.map((c) => (
                     <tr
                       key={c.customer_id}
-                      className="hover:bg-[#faf4f1]/80 cursor-pointer whitespace-nowrap transition-colors"
+                      className="hover:bg-[#faf0e2]/70 cursor-pointer whitespace-nowrap transition-colors"
                       onClick={() => onInspectCustomer(c)}
                     >
-                      <td className="py-2.5 px-3.5 font-medium text-slate-600">{c.customer_id}</td>
-                      <td className="py-2.5 px-3 font-semibold text-zinc-900">{c.customer_name}</td>
-                      <td className="py-2.5 px-3 font-medium" style={{ color: 'var(--brand-hover)' }}>
+                      <td className="py-2.5 px-3.5 font-medium" style={{ color: 'var(--text-muted)' }}>
+                        {c.customer_id}
+                      </td>
+                      <td className="py-2.5 px-3 font-semibold" style={{ color: 'var(--text-dark)' }}>
+                        {c.customer_name}
+                      </td>
+                      <td className="py-2.5 px-3 font-medium" style={{ color: 'var(--brand)' }}>
                         {formatPhone(c.contact_no)}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-600">{c.age ?? '—'}</td>
-                      <td className="py-2.5 px-3 text-slate-600">{c.dob || '—'}</td>
-                      <td className="py-2.5 px-3 font-semibold text-zinc-900">
+                      <td className="py-2.5 px-3 font-medium" style={{ color: 'var(--text-body)' }}>
+                        {c.total_visits}
+                      </td>
+                      <td className="py-2.5 px-3 font-semibold" style={{ color: 'var(--text-dark)' }}>
                         {formatINR(c.total_spend_inr)}
                       </td>
-                      <td className="py-2.5 px-3 font-medium text-slate-700">
+                      <td className="py-2.5 px-3 font-medium" style={{ color: 'var(--text-body)' }}>
                         {formatINR(c.avg_spend_per_visit_inr)}
                       </td>
-                      <td className="py-2.5 px-3 font-medium text-zinc-900">
+                      <td className="py-2.5 px-3 font-medium" style={{ color: 'var(--text-dark)' }}>
                         {c.most_ordered_dish || '—'}
                       </td>
-                      <td className="py-2.5 px-3 text-amber-700 font-semibold">
-                        {c.avg_rating_given !== null && c.avg_rating_given !== undefined
-                          ? `${c.avg_rating_given} / 5`
-                          : '—'}
+                      <td className="py-2.5 px-3 font-medium" style={{ color: 'var(--text-body)' }}>
+                        {c.days_since_last_visit}d ago
+                      </td>
+                      <td className="py-2.5 px-3 font-medium" style={{ color: 'var(--text-body)' }}>
+                        {c.expected_visit_gap > 0 ? `Every ${c.expected_visit_gap}d` : 'Single Visit'}
                       </td>
                       <td className="py-2.5 px-3.5">
                         <span className="cluster-tag-pill">{c.cluster_name}</span>
@@ -176,7 +181,7 @@ export function CustomersPage({ snapshot, onInspectCustomer }: CustomersPageProp
           {pageItems.length === 0 ? (
             <div
               className="surface-card"
-              style={{ padding: 28, gridColumn: '1 / -1', textAlign: 'center', color: '#64748b' }}
+              style={{ padding: 28, gridColumn: '1 / -1', textAlign: 'center', color: 'var(--text-muted)' }}
             >
               No guests match your filter.
             </div>
@@ -205,13 +210,16 @@ export function CustomersPage({ snapshot, onInspectCustomer }: CustomersPageProp
 
                 <div className="ac-offer-preview flex items-center justify-between gap-2 flex-wrap">
                   <span>
-                    ID: <strong className="text-zinc-900">{c.customer_id}</strong>
+                    ID: <strong>{c.customer_id}</strong>
                   </span>
                   <span>
-                    Age: <strong className="text-zinc-900">{c.age ?? '—'}</strong>
+                    Visits: <strong>{c.total_visits}</strong>
                   </span>
                   <span>
-                    DOB: <strong className="text-zinc-900">{c.dob || '—'}</strong>
+                    Interval:{' '}
+                    <strong>
+                      {c.expected_visit_gap > 0 ? `${c.expected_visit_gap}d` : '1st Visit'}
+                    </strong>
                   </span>
                 </div>
 
@@ -228,15 +236,10 @@ export function CustomersPage({ snapshot, onInspectCustomer }: CustomersPageProp
 
                 <div className="ac-bottom">
                   <span>
-                    Fav: <strong className="text-zinc-900">{c.most_ordered_dish || '—'}</strong>
+                    Fav Dish: <strong>{c.most_ordered_dish || '—'}</strong>
                   </span>
                   <span>
-                    Rating:{' '}
-                    <strong className="text-amber">
-                      {c.avg_rating_given !== null && c.avg_rating_given !== undefined
-                        ? `${c.avg_rating_given} / 5`
-                        : '—'}
-                    </strong>
+                    Last Visit: <strong>{c.days_since_last_visit}d ago</strong>
                   </span>
                 </div>
               </div>
@@ -247,9 +250,9 @@ export function CustomersPage({ snapshot, onInspectCustomer }: CustomersPageProp
 
       {totalPages > 1 && (
         <div className="surface-card px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap text-xs">
-          <span className="text-slate-600">
-            Page <strong className="text-zinc-900">{safePage}</strong> of{' '}
-            <strong className="text-zinc-900">{totalPages}</strong> ({filtered.length.toLocaleString()} guests)
+          <span style={{ color: 'var(--text-muted)' }}>
+            Page <strong style={{ color: 'var(--text-dark)' }}>{safePage}</strong> of{' '}
+            <strong style={{ color: 'var(--text-dark)' }}>{totalPages}</strong> ({filtered.length.toLocaleString()} guests)
           </span>
           <div className="flex items-center gap-2">
             <button

@@ -1,15 +1,14 @@
 import type { ClusterProfile, CustomerRecord, KMeansModelArtifact } from './types.ts';
 
 export const KMEANS_FEATURE_COLUMNS: string[] = [
-  'age',
   'total_visits',
   'total_spend_inr',
   'avg_spend_per_visit_inr',
+  'spend_per_person',
   'avg_group_size',
-  'total_children',
-  'discount_rate',
   'days_since_last_visit',
-  'avg_rating_given',
+  'expected_visit_gap',
+  'overdue_ratio',
   'chicken_share',
   'veg_share',
   'mutton_share',
@@ -19,7 +18,26 @@ export const KMEANS_FEATURE_COLUMNS: string[] = [
   'dessert_beverage_share',
 ];
 
-function extractFeatureVector(c: CustomerRecord, fallbackAge = 32): number[] {
+export const CANONICAL_CLUSTER_META: Record<number, { name: string; subtitle: string }> = {
+  0: {
+    name: 'Frequent Visitors',
+    subtitle: 'Regular diners with strong repeat-visit loyalty',
+  },
+  1: {
+    name: 'Premium Customers',
+    subtitle: 'High-spending guests who appreciate curated dining',
+  },
+  2: {
+    name: 'Family Visitors',
+    subtitle: 'Larger group & weekend celebration diners',
+  },
+  3: {
+    name: 'Occasional Customers',
+    subtitle: 'Single-visit guests ready to be welcomed back',
+  },
+};
+
+function extractFeatureVector(c: CustomerRecord): number[] {
   const totalFood = Math.max(
     1,
     c.chicken_orders +
@@ -30,19 +48,16 @@ function extractFeatureVector(c: CustomerRecord, fallbackAge = 32): number[] {
       c.chinese_fastfood_orders +
       c.dessert_beverage_orders
   );
-  const visits = Math.max(1, c.total_visits);
-  const discountRate = c.discount_used_count / visits;
 
   return [
-    c.age ?? fallbackAge,
     c.total_visits,
     c.total_spend_inr,
     c.avg_spend_per_visit_inr,
+    c.spend_per_person,
     c.avg_group_size,
-    c.total_children,
-    discountRate,
     c.days_since_last_visit,
-    c.avg_rating_given ?? 4.2,
+    c.expected_visit_gap,
+    c.overdue_ratio,
     c.chicken_orders / totalFood,
     c.veg_orders / totalFood,
     c.mutton_orders / totalFood,
@@ -82,7 +97,6 @@ function runSingleKMeans(
 } {
   const n = X.length;
   const dims = X[0].length;
-  // Standard K-Means++ probabilistic initialization (D^2 weighting)
   const centroids: number[][] = [];
   const firstIdx = Math.floor(rand() * n);
   centroids.push([...X[firstIdx]]);
@@ -179,7 +193,6 @@ function computeSilhouette(X: number[][], labels: number[], k: number): number {
   const totalN = X.length;
   if (totalN <= k || k < 2) return 0;
 
-  // For very large datasets (e.g. 3000+ rows), use deterministic uniform subsample for O(M^2) speed
   const maxSample = 400;
   const step = totalN > maxSample ? totalN / maxSample : 1;
   const sampleIndices: number[] = [];
@@ -225,35 +238,24 @@ function computeSilhouette(X: number[][], labels: number[], k: number): number {
   return Number((totalS / m).toFixed(4));
 }
 
-/**
- * Dynamically assigns meaningful business-friendly cluster names & maps
- * centroids cleanly to canonical behavioral roles based on actual cluster data.
- */
-function assignBusinessClusterNames(
+function assignRepeatClusterNames(
   customers: CustomerRecord[],
   rawLabels: number[],
   k: number
 ): {
   canonicalLabels: number[];
   canonicalRemap: number[];
-  labelMap: Record<number, { name: string; subtitle: string }>;
 } {
   const groups = Array.from({ length: k }, (_, cid) => {
     const members = customers.filter((_, idx) => rawLabels[idx] === cid);
     const n = Math.max(1, members.length);
     return {
       rawId: cid,
-      count: members.length,
       avgSpendPerVisit: members.reduce((s, m) => s + m.avg_spend_per_visit_inr, 0) / n,
-      avgVisits: members.reduce((s, m) => s + m.total_visits, 0) / n,
       avgGroupSize: members.reduce((s, m) => s + m.avg_group_size, 0) / n,
-      avgChildren: members.reduce((s, m) => s + m.total_children, 0) / n,
-      avgDiscountRate: members.reduce((s, m) => s + m.discount_rate, 0) / n,
     };
   });
 
-  // Match raw clusters to the 4 canonical Mother's Hut business segments:
-  // 0: Frequent Visitors, 1: Premium Customers, 2: Family Visitors, 3: Coupon Grabbers
   const assignedRaw = new Set<number>();
   const rawToCanonical = new Map<number, number>();
 
@@ -262,25 +264,16 @@ function assignBusinessClusterNames(
   rawToCanonical.set(premium.rawId, 1);
   assignedRaw.add(premium.rawId);
 
-  // 2) Highest group size + children among remaining -> Family Visitors (2)
+  // 2) Highest group size among remaining -> Family Visitors (2)
   const family = [...groups]
     .filter((g) => !assignedRaw.has(g.rawId))
-    .sort((a, b) => (b.avgGroupSize + b.avgChildren * 0.6) - (a.avgGroupSize + a.avgChildren * 0.6))[0];
+    .sort((a, b) => b.avgGroupSize - a.avgGroupSize)[0];
   if (family) {
     rawToCanonical.set(family.rawId, 2);
     assignedRaw.add(family.rawId);
   }
 
-  // 3) Highest discount rate among remaining -> Coupon Grabbers (3)
-  const coupon = [...groups]
-    .filter((g) => !assignedRaw.has(g.rawId))
-    .sort((a, b) => b.avgDiscountRate - a.avgDiscountRate)[0];
-  if (coupon) {
-    rawToCanonical.set(coupon.rawId, 3);
-    assignedRaw.add(coupon.rawId);
-  }
-
-  // 4) Remaining -> Frequent Visitors (0)
+  // 3) Remaining -> Frequent Visitors (0)
   for (const g of groups) {
     if (!assignedRaw.has(g.rawId)) {
       rawToCanonical.set(g.rawId, 0);
@@ -294,42 +287,50 @@ function assignBusinessClusterNames(
   });
 
   const canonicalLabels = rawLabels.map((r) => rawToCanonical.get(r) ?? 0);
+  return { canonicalLabels, canonicalRemap };
+}
 
-  const labelMap: Record<number, { name: string; subtitle: string }> = {
-    0: {
-      name: 'Frequent Visitors',
-      subtitle: 'Regular diners with strong repeat-visit loyalty',
-    },
-    1: {
-      name: 'Premium Customers',
-      subtitle: 'High-spending guests who appreciate curated dining',
-    },
-    2: {
-      name: 'Family Visitors',
-      subtitle: 'Family groups & weekend celebration diners',
-    },
-    3: {
-      name: 'Coupon Grabbers',
-      subtitle: 'Discount-responsive guests who love combo savings',
-    },
-  };
-
-  return { canonicalLabels, canonicalRemap, labelMap };
+function classifyRepeatGuestFallback(c: CustomerRecord, medianSpend: number): number {
+  if (c.avg_spend_per_visit_inr >= medianSpend * 1.35) return 1; // Premium
+  if (c.avg_group_size >= 3.0) return 2; // Family
+  return 0; // Frequent
 }
 
 export function trainKMeansModel(customers: CustomerRecord[], nClusters = 4): {
   model: KMeansModelArtifact;
   assignedCustomers: CustomerRecord[];
 } {
-  if (customers.length < nClusters) {
-    throw new Error(`Need at least ${nClusters} customers to train ${nClusters}-cluster K-Means.`);
+  const dims = KMEANS_FEATURE_COLUMNS.length;
+  const now = new Date();
+  const modelVersion = `km_${now.toISOString().replace(/[-:T.]/g, '').slice(0, 14)}`;
+
+  if (customers.length === 0) {
+    return {
+      model: {
+        model_version: modelVersion,
+        trained_at: now.toISOString(),
+        n_clusters: nClusters,
+        feature_columns: KMEANS_FEATURE_COLUMNS,
+        means: new Array<number>(dims).fill(0),
+        stds: new Array<number>(dims).fill(1),
+        centroids: Array.from({ length: 3 }, () => new Array<number>(dims).fill(0)),
+        cluster_label_map: CANONICAL_CLUSTER_META,
+        silhouette_score: 0,
+        inertia: 0,
+        elbow_inertias: {},
+        training_sample_count: 0,
+      },
+      assignedCustomers: [],
+    };
   }
 
-  const ages = customers.map((c) => c.age).filter((a): a is number => a !== null && a > 0);
-  const medianAge = ages.length > 0 ? ages.sort((a, b) => a - b)[Math.floor(ages.length / 2)] : 32;
+  // Single-visit guests -> Cluster 3 (Occasional Customers)
+  // Repeat guests -> 3-cluster K-Means++ (0: Frequent, 1: Premium, 2: Family)
+  const repeatCustomers = customers.filter((c) => c.total_visits > 1);
+  const repeatClustersCount = 3;
 
-  const rawMatrix = customers.map((c) => extractFeatureVector(c, medianAge));
-  const dims = KMEANS_FEATURE_COLUMNS.length;
+  const scalingSource = repeatCustomers.length >= repeatClustersCount ? repeatCustomers : customers;
+  const rawMatrix = scalingSource.map((c) => extractFeatureVector(c));
   const means = new Array<number>(dims).fill(0);
   const stds = new Array<number>(dims).fill(1);
 
@@ -341,62 +342,84 @@ export function trainKMeansModel(customers: CustomerRecord[], nClusters = 4): {
     stds[d] = Math.sqrt(variance) || 1;
   }
 
-  const XScaled = rawMatrix.map((row) => row.map((v, d) => (v - means[d]) / stds[d]));
-
+  const repeatIdToCluster = new Map<string, number>();
+  let silhouette = 0;
+  let inertia = 0;
   const elbowInertias: Record<string, number> = {};
-  for (let k = 2; k <= Math.min(6, customers.length - 1); k++) {
-    const evalRes = runKMeansCore(XScaled, k);
-    elbowInertias[String(k)] = Number(evalRes.inertia.toFixed(2));
+  let orderedCentroids: number[][] = Array.from({ length: 3 }, () => new Array<number>(dims).fill(0));
+
+  if (repeatCustomers.length >= repeatClustersCount) {
+    const XScaled = repeatCustomers.map((c) => {
+      const vec = extractFeatureVector(c);
+      return vec.map((v, d) => (v - means[d]) / stds[d]);
+    });
+
+    for (let k = 2; k <= Math.min(5, repeatCustomers.length - 1); k++) {
+      const evalRes = runKMeansCore(XScaled, k);
+      elbowInertias[String(k)] = Number(evalRes.inertia.toFixed(2));
+    }
+
+    const trained = runKMeansCore(XScaled, repeatClustersCount);
+    silhouette = computeSilhouette(XScaled, trained.labels, repeatClustersCount);
+    inertia = Number(trained.inertia.toFixed(2));
+
+    const { canonicalLabels, canonicalRemap } = assignRepeatClusterNames(
+      repeatCustomers,
+      trained.labels,
+      repeatClustersCount
+    );
+
+    orderedCentroids = canonicalRemap.map((rawIdx) => trained.centroids[rawIdx]);
+    repeatCustomers.forEach((c, idx) => {
+      repeatIdToCluster.set(c.customer_id, canonicalLabels[idx]);
+    });
+  } else {
+    const spends = customers.map((c) => c.avg_spend_per_visit_inr).sort((a, b) => a - b);
+    const medianSpend = spends[Math.floor(spends.length / 2)] || 500;
+    for (const c of repeatCustomers) {
+      repeatIdToCluster.set(c.customer_id, classifyRepeatGuestFallback(c, medianSpend));
+    }
   }
 
-  const trained = runKMeansCore(XScaled, nClusters);
-  const silhouette = computeSilhouette(XScaled, trained.labels, nClusters);
-  const { canonicalLabels, canonicalRemap, labelMap } = assignBusinessClusterNames(
-    customers,
-    trained.labels,
-    nClusters
-  );
+  const assignedCustomers = customers.map((c) => {
+    const cid = c.total_visits <= 1 ? 3 : repeatIdToCluster.get(c.customer_id) ?? 0;
+    return {
+      ...c,
+      cluster_id: cid,
+      cluster_name: CANONICAL_CLUSTER_META[cid]?.name || `Group ${cid + 1}`,
+    };
+  });
 
-  // Reorder centroids to canonical cluster IDs (0..3)
-  const orderedCentroids = canonicalRemap.map((rawIdx) => trained.centroids[rawIdx]);
-
-  const now = new Date();
   const model: KMeansModelArtifact = {
-    model_version: `km_${now.toISOString().replace(/[-:T.]/g, '').slice(0, 14)}`,
+    model_version: modelVersion,
     trained_at: now.toISOString(),
-    n_clusters: nClusters,
+    n_clusters: 4,
     feature_columns: KMEANS_FEATURE_COLUMNS,
     means,
     stds,
     centroids: orderedCentroids,
-    cluster_label_map: labelMap,
+    cluster_label_map: CANONICAL_CLUSTER_META,
     silhouette_score: silhouette,
-    inertia: Number(trained.inertia.toFixed(2)),
+    inertia,
     elbow_inertias: elbowInertias,
     training_sample_count: customers.length,
   };
 
-  const assignedCustomers = customers.map((c, idx) => {
-    const cid = canonicalLabels[idx];
-    return {
-      ...c,
-      cluster_id: cid,
-      cluster_name: labelMap[cid]?.name || `Cluster ${cid}`,
-    };
-  });
-
   return { model, assignedCustomers };
 }
 
-/**
- * Predicts cluster for a single customer using the SAVED scaler & centroids.
- * Does NOT retrain K-Means on incoming orders.
- */
 export function predictCustomerCluster(
   customer: CustomerRecord,
   model: KMeansModelArtifact
 ): { cluster_id: number; cluster_name: string } {
-  const vec = extractFeatureVector(customer, model.means[0] || 32);
+  if (customer.total_visits <= 1) {
+    return {
+      cluster_id: 3,
+      cluster_name: CANONICAL_CLUSTER_META[3].name,
+    };
+  }
+
+  const vec = extractFeatureVector(customer);
   const scaled = vec.map((v, d) => (v - (model.means[d] ?? 0)) / (model.stds[d] || 1));
 
   let bestCid = 0;
@@ -410,7 +433,10 @@ export function predictCustomerCluster(
   }
   return {
     cluster_id: bestCid,
-    cluster_name: model.cluster_label_map[bestCid]?.name || `Cluster ${bestCid}`,
+    cluster_name:
+      model.cluster_label_map[bestCid]?.name ||
+      CANONICAL_CLUSTER_META[bestCid]?.name ||
+      `Group ${bestCid + 1}`,
   };
 }
 
@@ -425,31 +451,26 @@ export function buildClusterProfiles(
     customers.reduce((s, c) => s + c.total_visits, 0) / totalCustomers;
 
   const profiles: ClusterProfile[] = [];
+  const clusterCount = 4;
 
-  for (let cid = 0; cid < model.n_clusters; cid++) {
+  for (let cid = 0; cid < clusterCount; cid++) {
     const list = customers.filter((c) => c.cluster_id === cid);
-    const n = Math.max(1, list.length);
-    const meta = model.cluster_label_map[cid] || {
-      name: `Cluster ${cid}`,
-      subtitle: 'Behavioral customer segment',
+    const count = list.length;
+    const n = Math.max(1, count);
+    const meta = model.cluster_label_map[cid] || CANONICAL_CLUSTER_META[cid] || {
+      name: `Group ${cid + 1}`,
+      subtitle: 'Guest segment',
     };
 
     const totalRev = list.reduce((s, c) => s + c.total_spend_inr, 0);
-    const avgTotalSpend = totalRev / n;
-    const avgSpendPerVisit = list.reduce((s, c) => s + c.avg_spend_per_visit_inr, 0) / n;
-    const avgVisits = list.reduce((s, c) => s + c.total_visits, 0) / n;
-    const avgGroupSize = list.reduce((s, c) => s + c.avg_group_size, 0) / n;
-    const avgChildren = list.reduce((s, c) => s + c.total_children, 0) / n;
-    const ratedGuests = list.filter((c) => c.avg_rating_given !== null && Number.isFinite(c.avg_rating_given));
-    const avgRating =
-      ratedGuests.length > 0
-        ? ratedGuests.reduce((s, c) => s + (c.avg_rating_given ?? 0), 0) / ratedGuests.length
-        : 4.2;
-    const discountUsagePct = (list.reduce((s, c) => s + c.discount_rate, 0) / n) * 100;
+    const avgTotalSpend = count > 0 ? totalRev / n : 0;
+    const avgSpendPerVisit =
+      count > 0 ? list.reduce((s, c) => s + c.avg_spend_per_visit_inr, 0) / n : 0;
+    const avgVisits = count > 0 ? list.reduce((s, c) => s + c.total_visits, 0) / n : 0;
+    const avgGroupSize = count > 0 ? list.reduce((s, c) => s + c.avg_group_size, 0) / n : 0;
     const highAlertsCount = list.filter((c) => c.churn_alert_flag === 'HIGH_PRIORITY_ALERT').length;
-    const alertPct = (highAlertsCount / n) * 100;
+    const alertPct = count > 0 ? (highAlertsCount / n) * 100 : 0;
 
-    // Mode calculations from actual cluster members
     const catTotals: Record<string, number> = {
       Chicken: list.reduce((s, c) => s + c.chicken_orders, 0),
       Veg: list.reduce((s, c) => s + c.veg_orders, 0),
@@ -478,65 +499,58 @@ export function buildClusterProfiles(
         ? `Moderate (${highAlertsCount} overdue guests / ${alertPct.toFixed(0)}%)`
         : `Low (${highAlertsCount} overdue guests / ${alertPct.toFixed(0)}%)`;
 
-    const insights: string[] = [
-      `Contributes ₹${Math.round(totalRev).toLocaleString('en-IN')} across ${list.length} guests (${((list.length / totalCustomers) * 100).toFixed(1)}% of customer base).`,
-      `Average bill is ₹${Math.round(avgSpendPerVisit).toLocaleString('en-IN')} per visit (${avgSpendPerVisit >= overallAvgSpend ? 'above' : 'below'} restaurant avg of ₹${Math.round(overallAvgSpend).toLocaleString('en-IN')}) with ${avgVisits.toFixed(1)} visits/guest.`,
-      `Primary preference is ${topFoodCat} during ${prefMeal} on ${prefDay}s, with ${discountUsagePct.toFixed(0)}% coupon utilization and ${avgRating.toFixed(2)}/5 rating.`,
-    ];
+    const insights: string[] =
+      cid === 3
+        ? [
+            `Represents ${count} single-visit guests contributing ₹${Math.round(totalRev).toLocaleString('en-IN')} (${((count / totalCustomers) * 100).toFixed(1)}% of guests).`,
+            `First-visit bill averages ₹${Math.round(avgSpendPerVisit).toLocaleString('en-IN')} with party size ${avgGroupSize.toFixed(1)}.`,
+            `Most popular entry category is ${topFoodCat} during ${prefMeal} on ${prefDay}s.`,
+          ]
+        : [
+            `Contributes ₹${Math.round(totalRev).toLocaleString('en-IN')} across ${count} guests (${((count / totalCustomers) * 100).toFixed(1)}% of customer base).`,
+            `Average bill is ₹${Math.round(avgSpendPerVisit).toLocaleString('en-IN')} per visit (${avgSpendPerVisit >= overallAvgSpend ? 'above' : 'below'} restaurant avg of ₹${Math.round(overallAvgSpend).toLocaleString('en-IN')}) with ${avgVisits.toFixed(1)} visits/guest.`,
+            `Primary preference is ${topFoodCat} during ${prefMeal} on ${prefDay}s.`,
+          ];
 
     const recommendations: string[] = [];
     if (cid === 1) {
       recommendations.push(
         `Reserve priority ${prefDay} ${prefMeal} tables and offer personal chef hospitality around ${topFoodCat}.`,
-        'Avoid promotional coupons or discount codes; maintain refined VIP care and warm personal greetings.'
+        'Focus on refined VIP care and warm personal greetings.'
+      );
+    } else if (cid === 3) {
+      recommendations.push(
+        `Send a warm second-visit welcome message highlighting their ${topFoodCat} choice within 7–14 days.`,
+        `Invite single-visit guests back for a relaxed ${prefMeal} experience.`
+      );
+    } else if (cid === 2) {
+      recommendations.push(
+        `Promote family-friendly ${topFoodCat} platters and comfortable group tables on ${prefDay}s.`,
+        'Highlight multi-seat family dining experiences in follow-up messages.'
       );
     } else {
-      if (avgSpendPerVisit >= overallAvgSpend * 1.15) {
-        recommendations.push(
-          `Offer priority weekend ${prefMeal} reservations and signature tasting platters around ${topFoodCat}.`,
-          'Focus on hospitality perks and special celebrations rather than heavy discounting.'
-        );
-      }
-      if (avgGroupSize >= 3.2 || avgChildren >= 0.8) {
-        recommendations.push(
-          `Promote family-friendly ${topFoodCat} group platters and kids' complimentary dessert bundles on ${prefDay}s.`,
-          'Highlight comfortable multi-seat dining options in SMS campaigns.'
-        );
-      }
-      if (discountUsagePct >= 35) {
-        recommendations.push(
-          'Share flat-amount or weekday-saver SMS coupons to encourage visits during quieter hours.',
-          'Track repeat visit conversion after coupon redemption before expanding discount size.'
-        );
-      }
-      if (avgVisits >= overallAvgVisits) {
-        recommendations.push(
-          'Reward loyal guests with 2X points or complimentary starter treats on milestone visits.',
-          `Reach out promptly to the ${highAlertsCount} guests who have not visited recently.`
-        );
-      }
-      if (recommendations.length < 2) {
-        recommendations.push(
-          `Send personalized ${topFoodCat} dish reminders timed before ${prefDay} ${prefMeal} hours.`,
-          `Welcome back ${highAlertsCount} overdue guests using favourite-dish SMS greetings.`
-        );
-      }
+      recommendations.push(
+        avgVisits >= overallAvgVisits
+          ? 'Recognize loyal guests on milestone visits with signature hospitality.'
+          : `Send personalized ${topFoodCat} dish reminders before ${prefDay} ${prefMeal} hours.`,
+        `Reach out promptly to the ${highAlertsCount} guests who have not visited recently.`
+      );
     }
 
     profiles.push({
       cluster_id: cid,
       cluster_name: meta.name,
       subtitle: meta.subtitle,
-      customer_count: list.length,
-      customer_share_pct: Number(((list.length / totalCustomers) * 100).toFixed(1)),
+      customer_count: count,
+      customer_share_pct: Number(((count / totalCustomers) * 100).toFixed(1)),
       total_revenue_inr: Math.round(totalRev),
       avg_total_spend_inr: Math.round(avgTotalSpend),
       avg_spend_per_visit_inr: Math.round(avgSpendPerVisit),
       avg_visits: Number(avgVisits.toFixed(1)),
       avg_group_size: Number(avgGroupSize.toFixed(1)),
-      avg_children: Number(avgChildren.toFixed(2)),
-      avg_rating: Number(avgRating.toFixed(2)),
-      discount_usage_pct: Math.round(discountUsagePct),
+      avg_children: 0,
+      avg_rating: 0,
+      discount_usage_pct: 0,
       high_alerts_count: highAlertsCount,
       top_food_category: topFoodCat,
       preferred_meal_time: prefMeal,

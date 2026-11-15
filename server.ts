@@ -6,12 +6,15 @@ import { createServer as createViteServer } from 'vite';
 import {
   deleteBirthdayOffer,
   getDashboardSnapshot,
+  getSyncStatus,
   importCustomersFromCsv,
-  loadDatabase,
+  initDatabase,
   processBatchCustomers,
   resetCampaignOperations,
   retrainModelControlled,
   sendSmsCampaign,
+  startSupabaseSyncLoop,
+  syncFromSupabase,
   upsertBirthdayOffer,
   upsertCustomer,
 } from './server/db.ts';
@@ -51,20 +54,33 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
-  // Initialize database on startup
-  loadDatabase();
+  await initDatabase();
+  startSupabaseSyncLoop();
 
-  // Health Check
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
       service: "Mother's Hut Guest Portal API",
+      ...getSyncStatus(),
     });
   });
 
-  // Full Dashboard Snapshot (gzip-compressed when supported to speed up initial load)
-  app.get('/api/dashboard', (req, res) => {
+  app.post('/api/sync', async (_req, res) => {
     try {
+      const syncInfo = await syncFromSupabase(true);
+      res.json({ ...syncInfo, snapshot: getDashboardSnapshot() });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/dashboard', async (req, res) => {
+    try {
+      const status = getSyncStatus();
+      if (status.supabase_configured && status.dataset_source === 'supabase:pending') {
+        await syncFromSupabase(true);
+      }
+
       const snapshot = getDashboardSnapshot();
       const acceptEncoding = String(req.headers['accept-encoding'] || '');
       if (acceptEncoding.includes('gzip')) {
@@ -86,7 +102,6 @@ async function startServer() {
     }
   });
 
-  // Create or update customer (queues into 10-15 guest ML batch pipeline)
   app.post('/api/customers', (req, res) => {
     try {
       const result = upsertCustomer(req.body);
@@ -100,7 +115,6 @@ async function startServer() {
     }
   });
 
-  // Batch ingest guests and execute ML pipeline upon reaching threshold
   app.post('/api/customers/batch', (req, res) => {
     try {
       const items = Array.isArray(req.body) ? req.body : req.body?.records || req.body?.customers || [];
@@ -114,7 +128,6 @@ async function startServer() {
     }
   });
 
-  // Import CSV dataset
   app.post('/api/customers/import-csv', (req, res) => {
     try {
       const csvText = String(req.body?.csvText || req.body?.csv_text || '');
@@ -126,7 +139,6 @@ async function startServer() {
     }
   });
 
-  // Execute ML Pipeline (Data Cleaning -> Preprocessing -> Feature Engineering -> Apply Algorithm)
   app.post('/api/ml/retrain', (_req, res) => {
     try {
       const result = retrainModelControlled();
@@ -136,7 +148,6 @@ async function startServer() {
     }
   });
 
-  // Birthday Offer CRUD
   app.post('/api/birthday-offers', (req, res) => {
     try {
       const offer = upsertBirthdayOffer(req.body);
@@ -155,7 +166,6 @@ async function startServer() {
     }
   });
 
-  // SMS Campaign Runner
   app.post('/api/campaigns/send', (req, res) => {
     try {
       const campaign = sendSmsCampaign(req.body);
@@ -184,7 +194,6 @@ async function startServer() {
     }
   });
 
-  // Reset all sent campaigns & birthday/alert statuses for fresh testing
   app.post('/api/campaigns/reset', (_req, res) => {
     try {
       resetCampaignOperations();

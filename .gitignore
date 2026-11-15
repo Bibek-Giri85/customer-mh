@@ -6,3 +6,5 @@ coverage/
 *.log
 .env*
 !.env.example
+data/mothers_hut_db.json
+data/mothers_hut_ops.json
