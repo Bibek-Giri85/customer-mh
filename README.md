@@ -1,1 +1,1 @@
-# Mother's Hut — Guest Intelligence & Messaging Portal
+MH – Customer Segmentation & Marketing Strategy Manager (Auto-Synced)
