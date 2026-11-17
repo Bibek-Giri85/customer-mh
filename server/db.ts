@@ -33,8 +33,10 @@ export const ML_BATCH_THRESHOLD_MIN = 10;
 export const ML_BATCH_THRESHOLD_MAX = 15;
 
 let dbCache: DatabaseState | null = null;
+let opsCache: OpsState | null = null;
 let primaryPool: Pool | null = null;
 let masterPool: Pool | null = null;
+let opsTablesReady = false;
 let lastSyncedSignature = '';
 let lastSyncAt: string | null = null;
 let lastSyncError: string | null = null;
@@ -107,37 +109,164 @@ function getMasterPool(): Pool | null {
   return masterPool;
 }
 
-function loadOpsState(): OpsState {
+function loadLocalOpsState(): OpsState {
+  if (opsCache) return opsCache;
   ensureDir();
   if (fs.existsSync(OPS_PATH)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(OPS_PATH, 'utf-8')) as Partial<OpsState>;
-      return {
+      opsCache = {
         phone_to_id: parsed.phone_to_id || {},
         next_cust_num: Number(parsed.next_cust_num) || 1001,
         campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns : [],
         birthday_offers: Array.isArray(parsed.birthday_offers) ? parsed.birthday_offers : [],
         processing_logs: Array.isArray(parsed.processing_logs) ? parsed.processing_logs : [],
       };
+      return opsCache;
     } catch {
       // fall through
     }
   }
-  return {
+  opsCache = {
     phone_to_id: {},
     next_cust_num: 1001,
     campaigns: [],
     birthday_offers: [],
     processing_logs: [],
   };
+  return opsCache;
 }
 
-function saveOpsState(ops: OpsState): void {
+function saveLocalOpsState(ops: OpsState): void {
+  opsCache = ops;
   ensureDir();
   try {
     fs.writeFileSync(OPS_PATH, JSON.stringify(ops, null, 2), 'utf-8');
   } catch {
     // ignore read-only fs errors
+  }
+}
+
+async function ensureOpsTables(pool: Pool): Promise<void> {
+  if (opsTablesReady) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.portal_ops_meta (
+      id TEXT PRIMARY KEY,
+      phone_to_id JSONB NOT NULL DEFAULT '{}'::jsonb,
+      next_cust_num INTEGER NOT NULL DEFAULT 1001,
+      birthday_offers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      processing_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS public.portal_campaigns (
+      id TEXT PRIMARY KEY,
+      campaign_data JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  opsTablesReady = true;
+}
+
+async function loadOpsStateAsync(): Promise<OpsState> {
+  const local = loadLocalOpsState();
+  const pool = getPrimaryPool();
+  if (!pool) return local;
+
+  try {
+    await ensureOpsTables(pool);
+    const metaRes = await pool.query<{
+      phone_to_id: Record<string, string>;
+      next_cust_num: number;
+      birthday_offers: BirthdayOffer[];
+      processing_logs: ProcessingLog[];
+    }>(
+      `SELECT phone_to_id, next_cust_num, birthday_offers, processing_logs
+       FROM public.portal_ops_meta
+       WHERE id = 'default'
+       LIMIT 1`
+    );
+
+    const campRes = await pool.query<{ campaign_data: CampaignRecord }>(
+      `SELECT campaign_data
+       FROM public.portal_campaigns
+       ORDER BY created_at DESC
+       LIMIT 200`
+    );
+
+    const metaRow = metaRes.rows[0];
+    const merged: OpsState = {
+      phone_to_id: (metaRow?.phone_to_id as Record<string, string>) || local.phone_to_id || {},
+      next_cust_num: Number(metaRow?.next_cust_num) || local.next_cust_num || 1001,
+      campaigns: campRes.rows.map((r) => r.campaign_data),
+      birthday_offers: Array.isArray(metaRow?.birthday_offers)
+        ? metaRow.birthday_offers
+        : local.birthday_offers,
+      processing_logs: Array.isArray(metaRow?.processing_logs)
+        ? metaRow.processing_logs
+        : local.processing_logs,
+    };
+
+    saveLocalOpsState(merged);
+    return merged;
+  } catch (err) {
+    console.warn('[Supabase] Could not load portal history tables:', (err as Error).message);
+    return local;
+  }
+}
+
+async function saveOpsMetaToSupabase(ops: OpsState): Promise<void> {
+  const pool = getPrimaryPool();
+  if (!pool) return;
+  try {
+    await ensureOpsTables(pool);
+    await pool.query(
+      `INSERT INTO public.portal_ops_meta (
+        id, phone_to_id, next_cust_num, birthday_offers, processing_logs, updated_at
+      )
+      VALUES ('default', $1::jsonb, $2, $3::jsonb, $4::jsonb, NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        phone_to_id = EXCLUDED.phone_to_id,
+        next_cust_num = EXCLUDED.next_cust_num,
+        birthday_offers = EXCLUDED.birthday_offers,
+        processing_logs = EXCLUDED.processing_logs,
+        updated_at = NOW()`,
+      [
+        JSON.stringify(ops.phone_to_id || {}),
+        Number(ops.next_cust_num) || 1001,
+        JSON.stringify(ops.birthday_offers || []),
+        JSON.stringify((ops.processing_logs || []).slice(0, 200)),
+      ]
+    );
+  } catch (err) {
+    console.warn('[Supabase] Could not persist portal meta:', (err as Error).message);
+  }
+}
+
+async function saveCampaignToSupabase(campaign: CampaignRecord): Promise<void> {
+  const pool = getPrimaryPool();
+  if (!pool) return;
+  try {
+    await ensureOpsTables(pool);
+    await pool.query(
+      `INSERT INTO public.portal_campaigns (id, campaign_data, created_at)
+       VALUES ($1, $2::jsonb, $3::timestamptz)
+       ON CONFLICT (id) DO UPDATE SET
+         campaign_data = EXCLUDED.campaign_data`,
+      [campaign.id, JSON.stringify(campaign), campaign.created_at]
+    );
+  } catch (err) {
+    console.warn('[Supabase] Could not persist campaign history:', (err as Error).message);
+  }
+}
+
+async function clearCampaignsInSupabase(): Promise<void> {
+  const pool = getPrimaryPool();
+  if (!pool) return;
+  try {
+    await ensureOpsTables(pool);
+    await pool.query(`DELETE FROM public.portal_campaigns`);
+  } catch (err) {
+    console.warn('[Supabase] Could not clear campaign history:', (err as Error).message);
   }
 }
 
@@ -208,16 +337,45 @@ type FoodCatKey =
 
 function classifyDishCategory(dishName: string, categoryHint = ''): FoodCatKey {
   const text = `${dishName} ${categoryHint}`.toLowerCase();
-  if (/(biryani|pulao|rice|khichdi|tehri)/.test(text)) return 'biryani';
-  if (/(mutton|lamb|kosha|keema|goat)/.test(text)) return 'mutton';
-  if (/(fish|prawn|crab|hilsa|ilish|chingri|pomfret|bhetki|seafood|rohu|katla)/.test(text))
-    return 'seafood';
-  if (/(noodle|chow|momo|manchurian|chilli|fried rice|roll|burger|pizza|sandwich|pasta|soup|chinese|fast)/.test(text))
+
+  if (
+    /(noodle|chow|hakka|schezwan|szechuan|momo|manchurian|chilli|chili|fried rice|roll|burger|pizza|sandwich|pasta|soup|crispy|spring roll|wonton|cutlet|chop|wrap|shawarma|maggi|chinese|fast food)/.test(
+      text
+    )
+  ) {
     return 'chinese';
-  if (/(ice cream|gulab|rasmalai|payesh|mishti|cake|sweet|dessert|lassi|shake|tea|coffee|mojito|juice|drink|soda|beverage)/.test(text))
+  }
+  if (/(biryani|biriyani|pulao|polao|rice|khichdi|tehri)/.test(text)) return 'biryani';
+  if (/(mutton|lamb|kosha|keema|goat|patha|mangsho|rogan|nihari)/.test(text)) return 'mutton';
+  if (
+    /(fish|prawn|crab|hilsa|ilish|chingri|pomfret|bhetki|vetki|seafood|rohu|rui|katla|pabda|chitol|tangra|parshe|macher|maach|lobster)/.test(
+      text
+    )
+  ) {
+    return 'seafood';
+  }
+  if (
+    /(ice cream|gulab|rasmalai|payesh|mishti|cake|sweet|dessert|lassi|shake|tea|chai|coffee|mojito|juice|drink|soda|beverage|water|cola|pepsi|coke|sprite|fanta|thums|lime|lagoon|kulfi|rabri|phirni|jalebi|brownie|falooda|mocktail)/.test(
+      text
+    )
+  ) {
     return 'dessert';
-  if (/(chicken|murgh|tandoori|tikka|kebab|wings|lollipop)/.test(text)) return 'chicken';
+  }
+  if (
+    /(chicken|chkn|chk|murgh|murg|murgi|tandoori|tikka|kebab|kabab|wings|lollipop|reshmi|afghani|hariyali|tangdi|rezala)/.test(
+      text
+    ) ||
+    (/(chaap)/.test(text) && !/(paneer|veg|soya)/.test(text))
+  ) {
+    return 'chicken';
+  }
   return 'veg';
+}
+
+function isSideOrAccompaniment(dishName: string): boolean {
+  return /(naan|roti|kulcha|paratha|parota|chapati|phulka|papad|raita|salad|mineral water|packaged water)/.test(
+    dishName.toLowerCase()
+  );
 }
 
 function parseOrderItems(itemsRaw: unknown): Array<{ name: string; qty: number; category: string }> {
@@ -249,14 +407,25 @@ function parseOrderItems(itemsRaw: unknown): Array<{ name: string; qty: number; 
     const name = String(
       item.name ||
         item.item_name ||
+        item.itemName ||
         item.dish_name ||
+        item.dishName ||
         item.dish ||
         item.title ||
         item.product_name ||
+        item.menu_name ||
+        item.menuName ||
+        item.label ||
+        item.item ||
         ''
     ).trim();
-    const qty = Math.max(1, Math.round(Number(item.qty ?? item.quantity ?? item.count ?? 1) || 1));
-    const category = String(item.category || item.cat || item.type || '').trim();
+    const qty = Math.max(
+      1,
+      Math.round(Number(item.qty ?? item.quantity ?? item.count ?? item.units ?? 1) || 1)
+    );
+    const category = String(
+      item.category || item.item_category || item.cat || item.type || item.section || ''
+    ).trim();
     if (name) {
       result.push({ name, qty, category });
     }
@@ -324,7 +493,7 @@ function aggregateOrdersToCustomers(
     let groupSizeSum = 0;
 
     const dishCounts = new Map<string, number>();
-    const catCounts: Record<FoodCatKey, number> = {
+    const catWeights: Record<FoodCatKey, number> = {
       chicken: 0,
       veg: 0,
       mutton: 0,
@@ -362,9 +531,12 @@ function aggregateOrdersToCustomers(
       const rowCats: string[] = [];
 
       for (const it of parsedItems) {
-        dishCounts.set(it.name, (dishCounts.get(it.name) || 0) + it.qty);
+        const isSide = isSideOrAccompaniment(it.name);
+        const dishScore = isSide ? 0.25 : it.qty;
+        dishCounts.set(it.name, (dishCounts.get(it.name) || 0) + dishScore);
+
         const catKey = classifyDishCategory(it.name, it.category);
-        catCounts[catKey] += it.qty;
+        catWeights[catKey] += isSide ? 0.25 : it.qty;
         rowDishNames.push(it.name);
         rowCats.push(catKey);
       }
@@ -414,13 +586,13 @@ function aggregateOrdersToCustomers(
         avg_group_size: Number((groupSizeSum / totalVisits).toFixed(1)),
         total_children: 0,
         discount_used_count: 0,
-        chicken_orders: catCounts.chicken,
-        veg_orders: catCounts.veg,
-        mutton_orders: catCounts.mutton,
-        seafood_orders: catCounts.seafood,
-        biryani_rice_orders: catCounts.biryani,
-        chinese_fastfood_orders: catCounts.chinese,
-        dessert_beverage_orders: catCounts.dessert,
+        chicken_orders: Math.round(catWeights.chicken * 100) / 100,
+        veg_orders: Math.round(catWeights.veg * 100) / 100,
+        mutton_orders: Math.round(catWeights.mutton * 100) / 100,
+        seafood_orders: Math.round(catWeights.seafood * 100) / 100,
+        biryani_rice_orders: Math.round(catWeights.biryani * 100) / 100,
+        chinese_fastfood_orders: Math.round(catWeights.chinese * 100) / 100,
+        dessert_beverage_orders: Math.round(catWeights.dessert * 100) / 100,
         most_ordered_dish: favDish,
         preferred_day_type: topDay,
         preferred_meal_time: topMeal,
@@ -629,28 +801,30 @@ export async function syncFromSupabase(force = false): Promise<{
   }
 
   const tableName = sanitizeTableName(process.env.SUPABASE_TABLE_NAME || 'orders');
-  console.log(`[Supabase] Fetching rows from public."${tableName}"...`);
 
-  const { rows } = await pool.query<RawSupabaseOrderRow>(
-    `SELECT * FROM public."${tableName}" ORDER BY ordered_at ASC NULLS LAST`
+  // Lightweight 1-row check (~50 bytes) before downloading the full orders table
+  const checkRes = await pool.query<{ total_count: number; latest_ts: string | null }>(
+    `SELECT COUNT(*)::int AS total_count, MAX(ordered_at)::text AS latest_ts FROM public."${tableName}"`
   );
-
-  const latestTs =
-    rows.length > 0
-      ? String(rows[rows.length - 1].ordered_at || rows[rows.length - 1].id)
-      : 'empty';
-  const signature = `${tableName}:${rows.length}:${latestTs}`;
+  const totalCount = checkRes.rows[0]?.total_count ?? 0;
+  const latestTs = checkRes.rows[0]?.latest_ts || 'empty';
+  const signature = `${tableName}:${totalCount}:${latestTs}`;
 
   if (!force && dbCache && dbCache.dataset_source === `supabase:${tableName}` && signature === lastSyncedSignature) {
     lastSyncError = null;
     return {
       synced: false,
-      orders_count: rows.length,
+      orders_count: totalCount,
       customers_count: dbCache.customers.length,
     };
   }
 
-  const ops = loadOpsState();
+  console.log(`[Supabase] Fetching rows from public."${tableName}"...`);
+  const { rows } = await pool.query<RawSupabaseOrderRow>(
+    `SELECT * FROM public."${tableName}" ORDER BY ordered_at ASC NULLS LAST`
+  );
+
+  const ops = await loadOpsStateAsync();
   const { customers, orders } = aggregateOrdersToCustomers(rows, ops);
   const { model, assignedCustomers } = trainKMeansModel(customers, 4);
 
@@ -681,7 +855,8 @@ export async function syncFromSupabase(force = false): Promise<{
     nextState.processing_logs = nextState.processing_logs.slice(0, 200);
   }
   ops.processing_logs = nextState.processing_logs;
-  saveOpsState(ops);
+  saveLocalOpsState(ops);
+  await saveOpsMetaToSupabase(ops);
 
   dbCache = nextState;
   lastSyncedSignature = signature;
@@ -705,6 +880,8 @@ export function getSyncStatus() {
     dataset_source: dbCache?.dataset_source || 'not_loaded',
     orders_count: dbCache?.orders.length || 0,
     customers_count: dbCache?.customers.length || 0,
+    campaigns_count: dbCache?.campaigns.length || 0,
+    sync_interval_seconds: Math.max(15, Number(process.env.SUPABASE_SYNC_INTERVAL_SECONDS) || 300),
     last_sync_at: lastSyncAt,
     last_sync_error: lastSyncError,
   };
@@ -731,7 +908,7 @@ export async function initDatabase(): Promise<DatabaseState> {
 export function startSupabaseSyncLoop(): void {
   const pool = getPrimaryPool();
   if (!pool) return;
-  const intervalSec = Math.max(15, Number(process.env.SUPABASE_SYNC_INTERVAL_SECONDS) || 60);
+  const intervalSec = Math.max(15, Number(process.env.SUPABASE_SYNC_INTERVAL_SECONDS) || 300);
   setInterval(() => {
     void syncFromSupabase(false)
       .then((res) => {
@@ -773,7 +950,7 @@ export function loadDatabase(): DatabaseState {
       }
     }
 
-    const ops = loadOpsState();
+    const ops = loadLocalOpsState();
     const { model, assignedCustomers } = trainKMeansModel([], 4);
     dbCache = {
       dataset_source: 'supabase:pending',
@@ -837,11 +1014,11 @@ export function saveDatabase(): void {
   ensureDir();
   try {
     fs.writeFileSync(DB_PATH, JSON.stringify(dbCache, null, 2), 'utf-8');
-    const ops = loadOpsState();
+    const ops = loadLocalOpsState();
     ops.campaigns = dbCache.campaigns;
     ops.birthday_offers = dbCache.birthday_offers;
     ops.processing_logs = dbCache.processing_logs;
-    saveOpsState(ops);
+    saveLocalOpsState(ops);
   } catch {
     // ignore read-only fs errors
   }
@@ -868,12 +1045,18 @@ export function addProcessingLog(
   saveDatabase();
 }
 
-export function resetCampaignOperations(): void {
+export async function resetCampaignOperationsAsync(): Promise<void> {
   const db = loadDatabase();
   db.campaigns = [];
   db.birthday_campaigns = [];
   db.processing_logs = [];
   saveDatabase();
+  await clearCampaignsInSupabase();
+  await saveOpsMetaToSupabase(loadLocalOpsState());
+}
+
+export function resetCampaignOperations(): void {
+  void resetCampaignOperationsAsync();
 }
 
 export function getDashboardSnapshot() {
@@ -888,13 +1071,13 @@ export function getDashboardSnapshot() {
   const activeCustomers = customers.filter((c) => c.days_since_last_visit <= 35).length;
 
   const foodTotals = [
-    { category: 'Chicken', count: customers.reduce((s, c) => s + c.chicken_orders, 0) },
-    { category: 'Biryani & Rice', count: customers.reduce((s, c) => s + c.biryani_rice_orders, 0) },
-    { category: 'Veg', count: customers.reduce((s, c) => s + c.veg_orders, 0) },
-    { category: 'Mutton', count: customers.reduce((s, c) => s + c.mutton_orders, 0) },
-    { category: 'Chinese & Fast Food', count: customers.reduce((s, c) => s + c.chinese_fastfood_orders, 0) },
-    { category: 'Dessert & Beverage', count: customers.reduce((s, c) => s + c.dessert_beverage_orders, 0) },
-    { category: 'Seafood', count: customers.reduce((s, c) => s + c.seafood_orders, 0) },
+    { category: 'Chicken', count: Math.round(customers.reduce((s, c) => s + c.chicken_orders, 0)) },
+    { category: 'Biryani & Rice', count: Math.round(customers.reduce((s, c) => s + c.biryani_rice_orders, 0)) },
+    { category: 'Veg', count: Math.round(customers.reduce((s, c) => s + c.veg_orders, 0)) },
+    { category: 'Mutton', count: Math.round(customers.reduce((s, c) => s + c.mutton_orders, 0)) },
+    { category: 'Chinese & Fast Food', count: Math.round(customers.reduce((s, c) => s + c.chinese_fastfood_orders, 0)) },
+    { category: 'Dessert & Beverage', count: Math.round(customers.reduce((s, c) => s + c.dessert_beverage_orders, 0)) },
+    { category: 'Seafood', count: Math.round(customers.reduce((s, c) => s + c.seafood_orders, 0)) },
   ].sort((a, b) => b.count - a.count);
 
   const contactedIds = new Set<string>();
@@ -1263,6 +1446,15 @@ export function sendSmsCampaign(input: {
   return campaign;
 }
 
+export async function sendSmsCampaignAsync(
+  input: Parameters<typeof sendSmsCampaign>[0]
+): Promise<CampaignRecord> {
+  const campaign = sendSmsCampaign(input);
+  await saveCampaignToSupabase(campaign);
+  await saveOpsMetaToSupabase(loadLocalOpsState());
+  return campaign;
+}
+
 export function upsertBirthdayOffer(
   input: Partial<BirthdayOffer> & { title: string; discount_or_benefit: string }
 ): BirthdayOffer {
@@ -1290,6 +1482,7 @@ export function upsertBirthdayOffer(
   if (existingIdx >= 0) db.birthday_offers[existingIdx] = offer;
   else db.birthday_offers.unshift(offer);
   saveDatabase();
+  void saveOpsMetaToSupabase(loadLocalOpsState());
   return offer;
 }
 
@@ -1297,4 +1490,5 @@ export function deleteBirthdayOffer(offerId: string): void {
   const db = loadDatabase();
   db.birthday_offers = db.birthday_offers.filter((o) => o.id !== offerId);
   saveDatabase();
+  void saveOpsMetaToSupabase(loadLocalOpsState());
 }

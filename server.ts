@@ -10,9 +10,9 @@ import {
   importCustomersFromCsv,
   initDatabase,
   processBatchCustomers,
-  resetCampaignOperations,
+  resetCampaignOperationsAsync,
   retrainModelControlled,
-  sendSmsCampaign,
+  sendSmsCampaignAsync,
   startSupabaseSyncLoop,
   syncFromSupabase,
   upsertBirthdayOffer,
@@ -166,9 +166,9 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/send', (req, res) => {
+  app.post('/api/campaigns/send', async (req, res) => {
     try {
-      const campaign = sendSmsCampaign(req.body);
+      const campaign = await sendSmsCampaignAsync(req.body);
       res.json({
         campaign,
         snapshot: getDashboardSnapshot(),
@@ -180,9 +180,9 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/simulate', (req, res) => {
+  app.post('/api/campaigns/simulate', async (req, res) => {
     try {
-      const campaign = sendSmsCampaign(req.body);
+      const campaign = await sendSmsCampaignAsync(req.body);
       res.json({
         campaign,
         snapshot: getDashboardSnapshot(),
@@ -194,9 +194,9 @@ async function startServer() {
     }
   });
 
-  app.post('/api/campaigns/reset', (_req, res) => {
+  app.post('/api/campaigns/reset', async (_req, res) => {
     try {
-      resetCampaignOperations();
+      await resetCampaignOperationsAsync();
       res.json({ ok: true, snapshot: getDashboardSnapshot() });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

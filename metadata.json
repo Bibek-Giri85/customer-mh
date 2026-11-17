@@ -1,6 +1,0 @@
-{
-  "name": "Mother's Hut — Guest Intelligence & Messaging",
-  "description": "Customer Segmentation, Marketing Campaign & Birthday Management System for Mother's Hut Restaurant.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

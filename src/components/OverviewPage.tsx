@@ -128,11 +128,27 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
   return (
     <div className="tab-animate space-y-4">
       <div className="hero-row" style={{ marginBottom: 24 }}>
-        <div>
+        <div className="min-w-0 flex-1">
           <h1>Restaurant Overview</h1>
           <p className="hero-subtitle">
             Live analytics across protected revenue, total orders, overdue guest alerts, delivered messages, and guest group distribution.
           </p>
+        </div>
+
+        <div
+          className="live-sync-pill"
+          role="status"
+          aria-live="polite"
+          title="Website fetches fresh restaurant data every 5 minutes"
+        >
+          <span className="live-dot-wrap" aria-hidden="true">
+            <span className="live-dot-ping" />
+            <span className="live-dot-core" />
+          </span>
+          <div className="live-sync-copy">
+            <span className="live-sync-title">Live Data Sync</span>
+            <span className="live-sync-sub">Auto-updates every 5 mins</span>
+          </div>
         </div>
       </div>
 
@@ -253,7 +269,10 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
                   >
                     {activeSlice.customer_share_pct}%
                   </span>
-                  <span className="text-[11px] font-semibold mt-1.5 leading-tight" style={{ color: 'var(--text-dark)' }}>
+                  <span
+                    className="text-[11px] font-semibold mt-1.5 leading-tight"
+                    style={{ color: 'var(--text-dark)' }}
+                  >
                     {activeSlice.cluster_name}
                   </span>
                   <span className="text-[10.5px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
@@ -262,10 +281,16 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
                 </>
               ) : (
                 <>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-soft)' }}>
+                  <span
+                    className="text-[10px] font-semibold uppercase tracking-wider"
+                    style={{ color: 'var(--text-soft)' }}
+                  >
                     Total Guests
                   </span>
-                  <span className="text-2xl font-semibold leading-tight mt-0.5" style={{ color: 'var(--text-dark)' }}>
+                  <span
+                    className="text-2xl font-semibold leading-tight mt-0.5"
+                    style={{ color: 'var(--text-dark)' }}
+                  >
                     {metrics.total_customers.toLocaleString()}
                   </span>
                   <span className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
@@ -417,7 +442,14 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
             <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
               Enter manager password to view revenue (auto-hides in 10s).
             </p>
-            <div className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg mb-2.5" style={{ background: 'var(--gold-soft)', color: 'var(--brand)', border: '1px solid var(--border)' }}>
+            <div
+              className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg mb-2.5"
+              style={{
+                background: 'var(--gold-soft)',
+                color: 'var(--brand)',
+                border: '1px solid var(--border)',
+              }}
+            >
               Tester Password: <strong>2004</strong>
             </div>
             <input

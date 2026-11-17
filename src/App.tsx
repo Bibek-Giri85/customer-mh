@@ -4,25 +4,17 @@ import { Navbar } from './components/Navbar';
 import { OverviewPage } from './components/OverviewPage';
 import { api } from './services/api';
 import type {
-  BirthdayOffer,
   CampaignRecord,
   CustomerRecord,
   DashboardSnapshot,
-  EnrichedBirthdayCustomer,
   NavTab,
 } from './types';
 import { CLUSTER_CONFIG } from './utils/formatters';
 
-const SNAPSHOT_CACHE_KEY = 'mh_dashboard_snapshot_v1';
+const SNAPSHOT_CACHE_KEY = 'mh_dashboard_snapshot_v3';
 
 const AlertsPage = lazy(() =>
   import('./components/AlertsPage').then((m) => ({ default: m.AlertsPage }))
-);
-const BirthdayOffersModal = lazy(() =>
-  import('./components/BirthdayOffersModal').then((m) => ({ default: m.BirthdayOffersModal }))
-);
-const BirthdayPage = lazy(() =>
-  import('./components/BirthdayPage').then((m) => ({ default: m.BirthdayPage }))
 );
 const CustomersPage = lazy(() =>
   import('./components/CustomersPage').then((m) => ({ default: m.CustomersPage }))
@@ -48,7 +40,11 @@ function readCachedSnapshot(): DashboardSnapshot | null {
     const raw = sessionStorage.getItem(SNAPSHOT_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as DashboardSnapshot;
-    if (parsed?.metrics && Array.isArray(parsed?.customers) && Array.isArray(parsed?.cluster_profiles)) {
+    if (
+      parsed?.metrics &&
+      Array.isArray(parsed?.customers) &&
+      Array.isArray(parsed?.cluster_profiles)
+    ) {
       return parsed;
     }
     return null;
@@ -67,7 +63,11 @@ function writeCachedSnapshot(data: DashboardSnapshot) {
 
 function TabLoadingFallback() {
   return (
-    <div className="mh-skeleton-grid tab-animate" aria-busy="true" aria-label="Loading workspace section">
+    <div
+      className="mh-skeleton-grid tab-animate"
+      aria-busy="true"
+      aria-label="Loading workspace section"
+    >
       <div className="mh-skeleton-card" />
       <div className="mh-skeleton-card" />
     </div>
@@ -84,9 +84,6 @@ export default function App() {
   const [selectedClusterId, setSelectedClusterId] = useState<number>(0);
 
   const [inspectedCustomer, setInspectedCustomer] = useState<CustomerRecord | null>(null);
-  const [selectedBirthdayCustomer, setSelectedBirthdayCustomer] =
-    useState<EnrichedBirthdayCustomer | null>(null);
-  const [showOffersModal, setShowOffersModal] = useState(false);
 
   const [smsModalOpen, setSmsModalOpen] = useState(false);
   const [isSendingSms, setIsSendingSms] = useState(false);
@@ -115,10 +112,6 @@ export default function App() {
       setSnapshot(data);
       writeCachedSnapshot(data);
       setLoadError(null);
-      setSelectedBirthdayCustomer((prev) => {
-        if (!prev) return null;
-        return data.birthdays.find((b) => b.customer.customer_id === prev.customer.customer_id) || null;
-      });
       setInspectedCustomer((prev) => {
         if (!prev) return null;
         return data.customers.find((c) => c.customer_id === prev.customer_id) || null;
@@ -169,14 +162,6 @@ export default function App() {
           writeCachedSnapshot(result.snapshot);
         }
         setDispatchedCampaign(result.campaign);
-        setSelectedBirthdayCustomer((prev) => {
-          if (!prev || !result?.snapshot?.birthdays) return null;
-          return (
-            result.snapshot.birthdays.find(
-              (b) => b.customer.customer_id === prev.customer.customer_id
-            ) || null
-          );
-        });
         showToast(
           `SMS sent to ${result.campaign.recipient_count} guest(s) (${result.campaign.delivered_count} delivered).`
         );
@@ -205,43 +190,11 @@ export default function App() {
       setInspectedCustomer((prev) =>
         prev && prev.customer_id === res.customer.customer_id ? res.customer : prev
       );
-      if (res.queued_for_ml_batch && !res.pipeline_executed) {
-        showToast(
-          `${res.customer.customer_name} updated & queued for ML batch (${res.queued_count}/${res.batch_threshold}).`
-        );
-      } else if (res.pipeline_executed) {
-        showToast('Batch processed through ML pipeline and updated on dashboard.');
-      } else {
-        showToast(
-          `Saved ${res.customer.customer_name} (${res.customer.cluster_name}) · Avg ₹${Math.round(
-            res.customer.avg_spend_per_visit_inr
-          )}/visit.`
-        );
-      }
-    },
-    [showToast]
-  );
-
-  const handleSaveOffer = useCallback(
-    async (payload: Partial<BirthdayOffer> & { title: string; discount_or_benefit: string }) => {
-      const res = await api.upsertBirthdayOffer(payload);
-      if (res?.snapshot?.metrics) {
-        setSnapshot(res.snapshot);
-        writeCachedSnapshot(res.snapshot);
-      }
-      showToast(`Birthday offer "${res.offer.title}" saved.`);
-    },
-    [showToast]
-  );
-
-  const handleDeleteOffer = useCallback(
-    async (offerId: string) => {
-      const res = await api.deleteBirthdayOffer(offerId);
-      if (res?.snapshot?.metrics) {
-        setSnapshot(res.snapshot);
-        writeCachedSnapshot(res.snapshot);
-      }
-      showToast('Birthday offer removed.');
+      showToast(
+        `Saved ${res.customer.customer_name} (${res.customer.cluster_name}) · Avg ₹${Math.round(
+          res.customer.avg_spend_per_visit_inr
+        )}/visit.`
+      );
     },
     [showToast]
   );
@@ -255,31 +208,9 @@ export default function App() {
         cluster_id: null,
         cluster_name: 'High Alert Guests',
         message_content:
-          "Greetings from Mother's Hut!\nHi {customer_name}, Tailored follow-up message per guest group (no offers for Premium Customers).",
+          "Greetings from Mother's Hut!\nHi {customer_name}, Tailored follow-up message per guest group.",
         language: 'en',
         recipient_ids: guests.map((g) => g.customer_id),
-      });
-    },
-    [dispatchSmsCampaign]
-  );
-
-  const handleFilteredBirthdayBulkSend = useCallback(
-    (payload: {
-      guests: EnrichedBirthdayCustomer[];
-      option_id: 1 | 2;
-      filter_label: string;
-    }) => {
-      if (payload.guests.length === 0) return;
-      void dispatchSmsCampaign({
-        campaign_name: `Birthday Wishes — ${payload.filter_label} (${payload.guests.length} Guests)`,
-        campaign_type: 'bulk_birthday',
-        cluster_id: null,
-        cluster_name: `Birthdays · ${payload.filter_label}`,
-        message_content:
-          "Greetings from Mother's Hut!\nHi {customer_name}, Personalized advance birthday wishes sent per guest and dining group (no offers for Premium Customers).",
-        language: 'en',
-        recipient_ids: payload.guests.map((g) => g.customer.customer_id),
-        birthday_option_id: payload.option_id,
       });
     },
     [dispatchSmsCampaign]
@@ -302,7 +233,7 @@ export default function App() {
                 Loading Mother&apos;s Hut Portal
               </div>
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Loading full guest dataset, dining groups, and upcoming birthdays...
+                Loading guest directory, dining groups, and live insights...
               </p>
             </div>
           </div>
@@ -333,7 +264,7 @@ export default function App() {
               setActiveTab(tab);
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            urgentBirthdaysCount={snapshot.metrics.upcoming_birthdays_7d}
+            urgentBirthdaysCount={0}
             highAlertsCount={snapshot.metrics.high_alerts_remaining}
             historyCount={snapshot.metrics.total_campaigns}
           />
@@ -371,30 +302,6 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'birthday' && (
-                <BirthdayPage
-                  snapshot={snapshot}
-                  selectedBirthdayCustomer={selectedBirthdayCustomer}
-                  onSelectBirthdayCustomer={setSelectedBirthdayCustomer}
-                  onOpenOffersModal={() => setShowOffersModal(true)}
-                  onSendBirthdaySms={(payload) =>
-                    void dispatchSmsCampaign({
-                      campaign_name: `Birthday Wishes — ${payload.customer_name}`,
-                      campaign_type: 'birthday',
-                      cluster_id: null,
-                      cluster_name: 'Birthday Celebration',
-                      message_content: payload.message_content,
-                      language: 'en',
-                      recipient_ids: [payload.customer_id],
-                      birthday_occurrence: payload.birthday_occurrence,
-                      offer_id: payload.offer_id,
-                      allow_resend: payload.allow_resend,
-                    })
-                  }
-                  onSendFilteredBirthdaySms={handleFilteredBirthdayBulkSend}
-                />
-              )}
-
               {activeTab === 'alerts' && (
                 <AlertsPage
                   snapshot={snapshot}
@@ -408,7 +315,7 @@ export default function App() {
           </main>
 
           <footer className="app-footer">
-            Mother&apos;s Hut Guest Portal • Guest Groups and Message, Upcoming Birthdays &amp; Messaging Studio
+            Mother&apos;s Hut Guest Portal • Guest Groups, Customer Alerts &amp; Messaging Studio
           </footer>
         </>
       ) : null}
@@ -438,18 +345,6 @@ export default function App() {
                 recipient_ids: [customer.customer_id],
               });
             }}
-          />
-        </Suspense>
-      )}
-
-      {showOffersModal && (
-        <Suspense fallback={null}>
-          <BirthdayOffersModal
-            isOpen={showOffersModal}
-            offers={snapshot?.birthday_offers || []}
-            onClose={() => setShowOffersModal(false)}
-            onSaveOffer={handleSaveOffer}
-            onDeleteOffer={handleDeleteOffer}
           />
         </Suspense>
       )}

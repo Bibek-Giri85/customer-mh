@@ -256,7 +256,6 @@ textarea:focus-visible {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
 }
 
-/* Hide Birthday tab since DOB is not in orders DB */
 .nav-tab-birthday {
   display: none !important;
 }
@@ -393,7 +392,7 @@ textarea:focus-visible {
   width: 100%;
   max-width: 1360px;
   margin: 0 auto;
-  padding: clamp(18px, 2.2vw, 26px) clamp(14px, 2.5vw, 28px) 36px;
+  padding: clamp(14px, 1.8vw, 22px) clamp(14px, 2.5vw, 28px) 28px;
 }
 
 .main-container > * {
@@ -403,7 +402,7 @@ textarea:focus-visible {
 .app-footer {
   border-top: 1.5px solid var(--border);
   background: #f5e6cf;
-  padding: 14px clamp(14px, 2.5vw, 28px);
+  padding: 12px clamp(14px, 2.5vw, 28px);
   text-align: center;
   font-size: 0.75rem;
   font-weight: 500;
@@ -431,14 +430,14 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 24px;
+  gap: 16px;
+  margin-bottom: 20px;
   flex-wrap: wrap;
   background: var(--surface);
   border: 1.5px solid var(--border);
   border-left: 5px solid var(--brand);
   border-radius: 16px;
-  padding: clamp(16px, 2vw, 20px) clamp(16px, 2.4vw, 26px);
+  padding: clamp(14px, 1.7vw, 18px) clamp(16px, 2.2vw, 24px);
   box-shadow: var(--shadow-sm);
 }
 
@@ -448,19 +447,94 @@ textarea:focus-visible {
 .text-red-dark { color: var(--red-alert-dark); }
 
 h1 {
-  font-size: clamp(1.36rem, 2.2vw, 1.72rem);
+  font-size: clamp(1.32rem, 2.1vw, 1.65rem);
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--brand);
-  line-height: 1.22;
+  line-height: 1.2;
 }
 
 .hero-subtitle {
-  font-size: clamp(0.82rem, 1.12vw, 0.9rem);
+  font-size: clamp(0.8rem, 1.1vw, 0.88rem);
   font-weight: 400;
   color: var(--text-body);
-  margin-top: 5px;
-  line-height: 1.45;
+  margin-top: 4px;
+  line-height: 1.42;
+}
+
+/* ================= LIVE DATA SYNC BADGE (BLINKING GREEN DOT) ================= */
+.live-sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fcf5e8 0%, #eefaf3 100%);
+  border: 1px solid #b7e3cb;
+  box-shadow: 0 2px 8px rgba(5, 150, 105, 0.08);
+  flex-shrink: 0;
+}
+
+.live-dot-wrap {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.live-dot-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #16a34a;
+  animation: livePulse 1.6s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+.live-dot-core {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+@keyframes livePulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.8;
+  }
+  70% {
+    transform: scale(2.15);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.15);
+    opacity: 0;
+  }
+}
+
+.live-sync-copy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.live-sync-title {
+  font-size: 0.77rem;
+  font-weight: 700;
+  color: var(--green-dark);
+  letter-spacing: 0.01em;
+}
+
+.live-sync-sub {
+  font-size: 0.71rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 .kpi-card {
@@ -1207,17 +1281,20 @@ h1 {
   box-shadow: 0 8px 20px var(--seg-shadow);
 }
 
-/* ================= GROUP PROFILES TAB ================= */
+/* ================= GROUP PROFILES TAB (COMPACT 2x2 SINGLE-VIEW & 3-IN-1-ROW TILES) ================= */
 .profiles-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
 
 .profile-card {
   position: relative;
   overflow: hidden;
-  padding: 22px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   transition: all 0.2s var(--ease-smooth);
 }
 
@@ -1229,7 +1306,7 @@ h1 {
   right: 0;
   height: 3.5px;
   background: var(--seg-color);
-  opacity: 0.65;
+  opacity: 0.7;
   transition: opacity 0.2s var(--ease-smooth);
 }
 
@@ -1247,27 +1324,28 @@ h1 {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 10px;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
 .profile-cluster-label {
-  font-size: 0.67rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   display: block;
-  margin-bottom: 3px;
+  margin-bottom: 2px;
   color: var(--seg-dark);
 }
 
 .profile-card h2 {
-  font-size: 1.12rem;
+  font-size: 1.08rem;
   font-weight: 700;
   color: var(--text-dark);
+  line-height: 1.25;
 }
 
 .profile-subtitle {
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -1275,8 +1353,8 @@ h1 {
 .group-size-badge {
   background: var(--surface-subtle);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 7px 14px;
+  border-radius: 11px;
+  padding: 6px 13px;
   text-align: center;
   flex-shrink: 0;
   transition: all 0.18s ease;
@@ -1289,20 +1367,21 @@ h1 {
 
 .group-size-badge span {
   display: block;
-  font-size: 0.64rem;
+  font-size: 0.62rem;
   color: var(--text-muted);
 }
 
 .group-size-badge strong {
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-dark);
 }
 
 .profile-body-desc {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
-  margin-bottom: 14px;
-  line-height: 1.55;
+  margin-bottom: 12px;
+  line-height: 1.45;
 }
 
 .profile-body-desc strong {
@@ -1312,8 +1391,21 @@ h1 {
 .profile-tiles-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 9px;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.profile-tiles-grid .stat-tile {
+  background: #fcf6ec;
+  border: 1px solid var(--border);
+  border-top: 2.5px solid var(--seg-color);
+  border-radius: 11px;
+  padding: 10px 13px;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.profile-card:hover .profile-tiles-grid .stat-tile {
+  background: #fffdf9;
 }
 
 .stat-tile {
@@ -1331,14 +1423,15 @@ h1 {
 .tile-label {
   display: block;
   font-size: 0.68rem;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
 .tile-val {
   display: block;
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 2px 0;
+  font-size: 1.02rem;
+  font-weight: 700;
+  margin: 2px 0 0;
   color: var(--text-dark);
 }
 
@@ -1354,7 +1447,8 @@ h1 {
   gap: 10px;
   flex-wrap: wrap;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 10px;
+  margin-top: auto;
   font-size: 0.78rem;
   color: var(--text-muted);
 }
@@ -2237,7 +2331,10 @@ h1 {
   }
   .hero-row {
     padding: 14px 16px;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
+  }
+  .live-sync-pill {
+    width: 100%;
   }
   .mh-skeleton-grid {
     grid-template-columns: 1fr;
@@ -2264,6 +2361,9 @@ h1 {
   }
   .profile-tiles-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .profile-tiles-grid .stat-tile:first-child {
+    grid-column: 1 / -1;
   }
   .kpi-card {
     gap: 12px;

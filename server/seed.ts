@@ -1,17 +1,6 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import type { BirthdayOffer, CustomerRecord, OrderRecord } from './types.ts';
 
-const CSV_CANDIDATES = [
-  path.resolve(process.cwd(), 'restaurant_customers_3000_alert_ready.csv'),
-  path.resolve(process.cwd(), 'public', 'assets', 'aistudio', 'restaurant_customers_3000_alert_ready_be6423cc.csv'),
-  path.resolve(process.cwd(), 'data', 'customers.csv'),
-];
-
 export function resolveDatasetCsvPath(): string | null {
-  for (const candidate of CSV_CANDIDATES) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
   return null;
 }
 
@@ -54,10 +43,6 @@ function formatYMD(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/**
- * Computes an effective "today" date so datasets dated ahead of the local clock
- * (e.g., Nov 14, 2026) still evaluate Alerts and 7-day Birthdays accurately.
- */
 export function getDatasetReferenceDate(
   records?: Array<{ last_visit_date?: string | null }>
 ): Date {
@@ -212,21 +197,23 @@ export function parseCustomersCsv(csvText: string): CustomerRecord[] {
   }
 
   const headers = rows[0].map((h) => h.trim().toLowerCase());
-  const rawEntries: Array<Omit<
-    CustomerRecord,
-    | 'first_visit_days_ago'
-    | 'days_since_last_visit'
-    | 'discount_rate'
-    | 'spend_per_person'
-    | 'expected_visit_gap'
-    | 'overdue_ratio'
-    | 'top_food_category'
-    | 'top_food_orders'
-    | 'top_food_share_pct'
-    | 'cluster_id'
-    | 'cluster_name'
-    | 'churn_alert_flag'
-  >> = [];
+  const rawEntries: Array<
+    Omit<
+      CustomerRecord,
+      | 'first_visit_days_ago'
+      | 'days_since_last_visit'
+      | 'discount_rate'
+      | 'spend_per_person'
+      | 'expected_visit_gap'
+      | 'overdue_ratio'
+      | 'top_food_category'
+      | 'top_food_orders'
+      | 'top_food_share_pct'
+      | 'cluster_id'
+      | 'cluster_name'
+      | 'churn_alert_flag'
+    >
+  > = [];
 
   for (let i = 1; i < rows.length; i++) {
     const cols = rows[i];
@@ -247,14 +234,6 @@ export function parseCustomersCsv(csvText: string): CustomerRecord[] {
 
     const contactDigits = getVal('contact_no').replace(/\D/g, '');
     const cleanPhone = contactDigits.length >= 10 ? contactDigits.slice(-10) : contactDigits;
-    const rawAge = getVal('age');
-    const parsedAge = rawAge !== '' && Number.isFinite(Number(rawAge)) ? Number(rawAge) : null;
-    const rawRating = getVal('avg_rating_given');
-    const parsedRating =
-      rawRating !== '' && Number.isFinite(Number(rawRating))
-        ? Number(Number(rawRating).toFixed(1))
-        : null;
-
     const totalVisits = Math.max(1, getNum('total_visits', 1));
     const totalSpend = Math.max(0, getNum('total_spend_inr', 0));
     const computedAvgSpend = Number((totalSpend / totalVisits).toFixed(2));
@@ -263,17 +242,17 @@ export function parseCustomersCsv(csvText: string): CustomerRecord[] {
       customer_id: customerId,
       customer_name: customerName,
       contact_no: cleanPhone,
-      age: parsedAge,
-      dob: normalizeDateToYMD(getVal('dob')),
-      gender: getVal('gender') || 'Prefer not to say',
+      age: null,
+      dob: null,
+      gender: getVal('gender') || 'Not Tracked',
       first_visit_date: normalizeDateToYMD(getVal('first_visit_date')) || formatYMD(new Date()),
       last_visit_date: normalizeDateToYMD(getVal('last_visit_date')) || formatYMD(new Date()),
       total_visits: totalVisits,
       total_spend_inr: totalSpend,
       avg_spend_per_visit_inr: computedAvgSpend,
       avg_group_size: Math.max(1, getNum('avg_group_size', 2)),
-      total_children: Math.max(0, getNum('total_children', 0)),
-      discount_used_count: Math.max(0, getNum('discount_used_count', 0)),
+      total_children: 0,
+      discount_used_count: 0,
       chicken_orders: Math.max(0, getNum('chicken_orders', 0)),
       veg_orders: Math.max(0, getNum('veg_orders', 0)),
       mutton_orders: Math.max(0, getNum('mutton_orders', 0)),
@@ -284,9 +263,9 @@ export function parseCustomersCsv(csvText: string): CustomerRecord[] {
       most_ordered_dish: getVal('most_ordered_dish') || null,
       preferred_day_type: getVal('preferred_day_type') || 'Weekend',
       preferred_meal_time: (getVal('preferred_meal_time') || 'Dinner').replace(/_/g, ' '),
-      avg_rating_given: parsedRating,
-      area: getVal('area') || 'Kolkata',
-      loyalty_member: getVal('loyalty_member') || (getNum('total_visits', 1) >= 10 ? 'Yes' : 'No'),
+      avg_rating_given: null,
+      area: getVal('area') || 'Dine-In',
+      loyalty_member: getVal('loyalty_member') || (totalVisits >= 5 ? 'Yes' : 'No'),
       preferred_order_channel: getVal('preferred_order_channel') || 'Dine-In',
     });
   }
@@ -306,64 +285,9 @@ export function createSeedData(): {
   orders: OrderRecord[];
   birthdayOffers: BirthdayOffer[];
 } {
-  let customers: CustomerRecord[] = [];
-  const csvPath = resolveDatasetCsvPath();
-  if (csvPath) {
-    const csvText = fs.readFileSync(csvPath, 'utf-8');
-    customers = parseCustomersCsv(csvText);
-  }
-
-  const orders: OrderRecord[] = customers.slice(0, 12).map((c, idx) => ({
-    order_id: `ORD_${202600 + idx + 1}`,
-    customer_id: c.customer_id,
-    order_date: c.last_visit_date,
-    order_amount: c.avg_spend_per_visit_inr,
-    group_size: Math.round(c.avg_group_size),
-    children_count: c.total_children > 0 ? 1 : 0,
-    discount_used: c.discount_used_count > 2,
-    food_categories: c.top_food_category,
-    dish_name: c.most_ordered_dish || 'House Special',
-    rating: c.avg_rating_given,
-    day_type: c.preferred_day_type,
-    meal_time: c.preferred_meal_time,
-    order_channel: c.preferred_order_channel,
-    order_status: 'READY',
-    processing_status: 'PROCESSED',
-    source: 'dataset',
-    created_at: new Date().toISOString(),
-  }));
-
-  const birthdayOffers: BirthdayOffer[] = [
-    {
-      id: 'bday_offer_1',
-      title: 'Birthday Complimentary Dessert & 15% Celebration Treat',
-      description: 'Complimentary signature dessert plus 15% off dine-in birthday celebration bills.',
-      applicable_item_or_category: 'All',
-      discount_or_benefit: 'a complimentary signature dessert & 15% OFF your birthday bill',
-      validity_days: 7,
-      min_order_amount_inr: 600,
-      terms_and_conditions:
-        'Valid once during birthday week on dine-in orders of ₹600 or above. Not needed for VIP hospitality guests.',
-      is_active: true,
-      owner_approved: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: 'bday_offer_2',
-      title: 'Biryani Birthday Family Upgrade',
-      description: 'Complimentary beverage pitcher with any Biryani family order.',
-      applicable_item_or_category: 'Biryani',
-      discount_or_benefit: 'a complimentary mocktail pitcher with your Biryani order',
-      validity_days: 5,
-      min_order_amount_inr: 800,
-      terms_and_conditions: 'Valid on Biryani & Rice orders above ₹800 within 5 days of birthday.',
-      is_active: false,
-      owner_approved: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-  ];
-
-  return { customers, orders, birthdayOffers };
+  return {
+    customers: [],
+    orders: [],
+    birthdayOffers: [],
+  };
 }
