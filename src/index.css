@@ -462,7 +462,7 @@ h1 {
   line-height: 1.42;
 }
 
-/* ================= LIVE DATA SYNC BADGE (BLINKING GREEN DOT) ================= */
+/* ================= LIVE DATA SYNC BADGE (BLINKING GREEN DOT + ERROR STATE) ================= */
 .live-sync-pill {
   display: inline-flex;
   align-items: center;
@@ -473,6 +473,18 @@ h1 {
   border: 1px solid #b7e3cb;
   box-shadow: 0 2px 8px rgba(5, 150, 105, 0.08);
   flex-shrink: 0;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.live-sync-pill:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(5, 150, 105, 0.13);
+}
+
+.live-sync-pill.is-error {
+  background: var(--red-alert-soft);
+  border-color: var(--red-alert-border);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.08);
 }
 
 .live-dot-wrap {
@@ -502,6 +514,10 @@ h1 {
   box-shadow: 0 0 0 2px #ffffff;
 }
 
+.live-dot-core.is-error {
+  background: var(--red-alert);
+}
+
 @keyframes livePulse {
   0% {
     transform: scale(0.9);
@@ -528,6 +544,10 @@ h1 {
   font-weight: 700;
   color: var(--green-dark);
   letter-spacing: 0.01em;
+}
+
+.live-sync-title.is-error {
+  color: var(--red-alert-dark);
 }
 
 .live-sync-sub {
@@ -1542,7 +1562,6 @@ h1 {
   box-shadow: 0 1px 4px rgba(88, 11, 20, 0.08);
 }
 
-/* 1-Click Quick Status Tabs in AlertsPage */
 .alert-quick-tabs {
   display: flex;
   gap: 8px;

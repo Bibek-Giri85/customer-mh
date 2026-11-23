@@ -55,6 +55,16 @@ export const api = {
     return data;
   },
 
+  syncNow: () =>
+    requestJson<{
+      synced: boolean;
+      orders_count: number;
+      customers_count: number;
+      snapshot: DashboardSnapshot;
+    }>('/api/sync', {
+      method: 'POST',
+    }),
+
   upsertCustomer: (payload: Partial<CustomerRecord> & { customer_name: string; contact_no: string }) =>
     requestJson<{
       customer: CustomerRecord;

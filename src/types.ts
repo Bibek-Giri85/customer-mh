@@ -226,6 +226,8 @@ export interface DashboardSnapshot {
     total_sms_sent: number;
     total_sms_delivered: number;
     total_sms_failed: number;
+    last_sync_at?: string | null;
+    last_sync_error?: string | null;
   };
   customers: CustomerRecord[];
   cluster_profiles: ClusterProfile[];

@@ -38,7 +38,7 @@ let primaryPool: Pool | null = null;
 let masterPool: Pool | null = null;
 let opsTablesReady = false;
 let lastSyncedSignature = '';
-let lastSyncAt: string | null = null;
+let lastDataUpdatedAt: string | null = null;
 let lastSyncError: string | null = null;
 
 interface OpsState {
@@ -802,75 +802,96 @@ export async function syncFromSupabase(force = false): Promise<{
 
   const tableName = sanitizeTableName(process.env.SUPABASE_TABLE_NAME || 'orders');
 
-  // Lightweight 1-row check (~50 bytes) before downloading the full orders table
-  const checkRes = await pool.query<{ total_count: number; latest_ts: string | null }>(
-    `SELECT COUNT(*)::int AS total_count, MAX(ordered_at)::text AS latest_ts FROM public."${tableName}"`
-  );
-  const totalCount = checkRes.rows[0]?.total_count ?? 0;
-  const latestTs = checkRes.rows[0]?.latest_ts || 'empty';
-  const signature = `${tableName}:${totalCount}:${latestTs}`;
+  try {
+    const checkRes = await pool.query<{
+      total_count: number;
+      latest_ts: string | null;
+      total_sum: string | null;
+    }>(
+      `SELECT
+         COUNT(*)::int AS total_count,
+         to_char(MAX(ordered_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_ts,
+         COALESCE(SUM(grand_total), 0)::text AS total_sum
+       FROM public."${tableName}"`
+    );
+    const totalCount = checkRes.rows[0]?.total_count ?? 0;
+    const latestTs = checkRes.rows[0]?.latest_ts || null;
+    const totalSum = checkRes.rows[0]?.total_sum || '0';
+    const signature = `${tableName}:${totalCount}:${latestTs || 'empty'}:${totalSum}`;
 
-  if (!force && dbCache && dbCache.dataset_source === `supabase:${tableName}` && signature === lastSyncedSignature) {
-    lastSyncError = null;
-    return {
-      synced: false,
-      orders_count: totalCount,
-      customers_count: dbCache.customers.length,
+    if (
+      !force &&
+      dbCache &&
+      dbCache.dataset_source === `supabase:${tableName}` &&
+      signature === lastSyncedSignature
+    ) {
+      lastSyncError = null;
+      if (!lastDataUpdatedAt && latestTs) {
+        lastDataUpdatedAt = latestTs;
+      }
+      return {
+        synced: false,
+        orders_count: totalCount,
+        customers_count: dbCache.customers.length,
+      };
+    }
+
+    console.log(`[Supabase] Fetching rows from public."${tableName}"...`);
+    const { rows } = await pool.query<RawSupabaseOrderRow>(
+      `SELECT * FROM public."${tableName}" ORDER BY ordered_at ASC NULLS LAST`
+    );
+
+    const ops = await loadOpsStateAsync();
+    const { customers, orders } = aggregateOrdersToCustomers(rows, ops);
+    const { model, assignedCustomers } = trainKMeansModel(customers, 4);
+
+    const nextState: DatabaseState = {
+      dataset_source: `supabase:${tableName}`,
+      customers: assignedCustomers,
+      orders,
+      birthday_offers: ops.birthday_offers,
+      campaigns: ops.campaigns,
+      birthday_campaigns: [],
+      processing_logs: ops.processing_logs,
+      model,
+      pending_ml_queue: [],
+      pending_ml_meta: [],
+      last_ml_pipeline_run: null,
     };
+
+    const run = executeMlPipelineOnState(nextState, [], assignedCustomers.length);
+    nextState.processing_logs.unshift({
+      id: crypto.randomUUID(),
+      event_type: 'SUPABASE_SYNC_COMPLETED',
+      reference_id: run.run_id,
+      status: 'SUCCESS',
+      details: `Synced ${rows.length} orders → ${assignedCustomers.length} guests across 4 groups.`,
+      created_at: new Date().toISOString(),
+    });
+    if (nextState.processing_logs.length > 200) {
+      nextState.processing_logs = nextState.processing_logs.slice(0, 200);
+    }
+    ops.processing_logs = nextState.processing_logs;
+    saveLocalOpsState(ops);
+    await saveOpsMetaToSupabase(ops);
+
+    dbCache = nextState;
+    lastSyncedSignature = signature;
+    lastDataUpdatedAt = latestTs || new Date().toISOString();
+    lastSyncError = null;
+    saveDatabase();
+
+    void syncAnalyticsToMasterSupabase(assignedCustomers, model.model_version);
+
+    return {
+      synced: true,
+      orders_count: rows.length,
+      customers_count: assignedCustomers.length,
+    };
+  } catch (err) {
+    lastSyncError = (err as Error).message;
+    throw err;
   }
-
-  console.log(`[Supabase] Fetching rows from public."${tableName}"...`);
-  const { rows } = await pool.query<RawSupabaseOrderRow>(
-    `SELECT * FROM public."${tableName}" ORDER BY ordered_at ASC NULLS LAST`
-  );
-
-  const ops = await loadOpsStateAsync();
-  const { customers, orders } = aggregateOrdersToCustomers(rows, ops);
-  const { model, assignedCustomers } = trainKMeansModel(customers, 4);
-
-  const nextState: DatabaseState = {
-    dataset_source: `supabase:${tableName}`,
-    customers: assignedCustomers,
-    orders,
-    birthday_offers: ops.birthday_offers,
-    campaigns: ops.campaigns,
-    birthday_campaigns: [],
-    processing_logs: ops.processing_logs,
-    model,
-    pending_ml_queue: [],
-    pending_ml_meta: [],
-    last_ml_pipeline_run: null,
-  };
-
-  const run = executeMlPipelineOnState(nextState, [], assignedCustomers.length);
-  nextState.processing_logs.unshift({
-    id: crypto.randomUUID(),
-    event_type: 'SUPABASE_SYNC_COMPLETED',
-    reference_id: run.run_id,
-    status: 'SUCCESS',
-    details: `Synced ${rows.length} orders → ${assignedCustomers.length} guests across 4 groups.`,
-    created_at: new Date().toISOString(),
-  });
-  if (nextState.processing_logs.length > 200) {
-    nextState.processing_logs = nextState.processing_logs.slice(0, 200);
-  }
-  ops.processing_logs = nextState.processing_logs;
-  saveLocalOpsState(ops);
-  await saveOpsMetaToSupabase(ops);
-
-  dbCache = nextState;
-  lastSyncedSignature = signature;
-  lastSyncAt = new Date().toISOString();
-  lastSyncError = null;
-  saveDatabase();
-
-  void syncAnalyticsToMasterSupabase(assignedCustomers, model.model_version);
-
-  return {
-    synced: true,
-    orders_count: rows.length,
-    customers_count: assignedCustomers.length,
-  };
 }
 
 export function getSyncStatus() {
@@ -882,7 +903,7 @@ export function getSyncStatus() {
     customers_count: dbCache?.customers.length || 0,
     campaigns_count: dbCache?.campaigns.length || 0,
     sync_interval_seconds: Math.max(15, Number(process.env.SUPABASE_SYNC_INTERVAL_SECONDS) || 300),
-    last_sync_at: lastSyncAt,
+    last_sync_at: lastDataUpdatedAt,
     last_sync_error: lastSyncError,
   };
 }
@@ -905,7 +926,7 @@ export async function initDatabase(): Promise<DatabaseState> {
   return loadDatabase();
 }
 
-export function startSupabaseSyncLoop(): void {
+export function startSupabaseSyncLoop(onSynced?: () => void): void {
   const pool = getPrimaryPool();
   if (!pool) return;
   const intervalSec = Math.max(15, Number(process.env.SUPABASE_SYNC_INTERVAL_SECONDS) || 300);
@@ -916,6 +937,7 @@ export function startSupabaseSyncLoop(): void {
           console.log(
             `[Supabase] Auto-synced ${res.orders_count} orders -> ${res.customers_count} guests.`
           );
+          onSynced?.();
         }
       })
       .catch((err) => {
@@ -1112,6 +1134,8 @@ export function getDashboardSnapshot() {
       total_sms_sent: db.campaigns.reduce((s, c) => s + c.sent_count, 0),
       total_sms_delivered: db.campaigns.reduce((s, c) => s + c.delivered_count, 0),
       total_sms_failed: db.campaigns.reduce((s, c) => s + c.failed_count, 0),
+      last_sync_at: lastDataUpdatedAt,
+      last_sync_error: lastSyncError,
     },
     customers,
     cluster_profiles: profiles,

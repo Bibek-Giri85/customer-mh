@@ -127,13 +127,46 @@ export default function App() {
 
   useEffect(() => {
     void fetchSnapshot(initialCache !== null);
-    const interval = setInterval(() => {
-      if (!document.hidden) {
+
+    let hadDisconnect = false;
+    const es = new EventSource('/api/events');
+
+    es.addEventListener('updated', () => {
+      void fetchSnapshot(true);
+    });
+
+    es.onopen = () => {
+      if (hadDisconnect) {
+        hadDisconnect = false;
         void fetchSnapshot(true);
       }
-    }, 30000);
-    return () => clearInterval(interval);
+    };
+
+    es.onerror = () => {
+      hadDisconnect = true;
+    };
+
+    return () => {
+      es.close();
+    };
   }, [fetchSnapshot, initialCache]);
+
+  const handleManualSync = useCallback(async () => {
+    try {
+      const res = await api.syncNow();
+      if (res?.snapshot?.metrics) {
+        setSnapshot(res.snapshot);
+        writeCachedSnapshot(res.snapshot);
+      }
+      showToast(
+        res.synced
+          ? `Synced ${res.orders_count} orders (${res.customers_count} guests).`
+          : 'Already up to date — no new orders.'
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to check database.');
+    }
+  }, [showToast]);
 
   const dispatchSmsCampaign = useCallback(
     async (payload: {
@@ -278,6 +311,7 @@ export default function App() {
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
                 onSelectGroup={handleMessageGroup}
+                onSyncNow={handleManualSync}
               />
             )}
 

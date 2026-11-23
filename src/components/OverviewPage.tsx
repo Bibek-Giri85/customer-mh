@@ -15,6 +15,7 @@ interface OverviewPageProps {
   snapshot: DashboardSnapshot;
   onNavigate: (tab: NavTab) => void;
   onSelectGroup: (cid: number) => void;
+  onSyncNow?: () => Promise<void> | void;
 }
 
 const REVENUE_UNLOCK_SECONDS = 10;
@@ -33,7 +34,42 @@ const SHORT_NAMES: Record<number, string> = {
   3: 'Occasional',
 };
 
-export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPageProps) {
+function formatSyncTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const dayFmt = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+  if (dayFmt.format(d) === dayFmt.format(new Date())) {
+    return d.toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  }
+
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+export function OverviewPage({
+  snapshot,
+  onNavigate,
+  onSelectGroup,
+  onSyncNow,
+}: OverviewPageProps) {
   const { metrics, cluster_profiles } = snapshot;
 
   const [revenueUnlocked, setRevenueUnlocked] = useState(false);
@@ -42,6 +78,7 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
   const [hoveredCid, setHoveredCid] = useState<number | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
 
   useEffect(() => {
     if (!revenueUnlocked) return;
@@ -63,6 +100,16 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
       setPinInput('');
       setPinError('');
       setShowPinModal(true);
+    }
+  };
+
+  const handlePillClick = async () => {
+    if (!onSyncNow || isChecking) return;
+    setIsChecking(true);
+    try {
+      await onSyncNow();
+    } finally {
+      setIsChecking(false);
     }
   };
 
@@ -125,6 +172,9 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
     [pieSlices, hoveredCid]
   );
 
+  const hasSyncError = Boolean(metrics.last_sync_error);
+  const formattedTime = formatSyncTime(metrics.last_sync_at);
+
   return (
     <div className="tab-animate space-y-4">
       <div className="hero-row" style={{ marginBottom: 24 }}>
@@ -135,25 +185,45 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
           </p>
         </div>
 
-        <div
-          className="live-sync-pill"
+        <button
+          type="button"
+          onClick={() => void handlePillClick()}
+          disabled={isChecking}
+          className={`live-sync-pill text-left cursor-pointer ${hasSyncError ? 'is-error' : ''}`}
           role="status"
           aria-live="polite"
-          title="Website fetches fresh restaurant data every 5 minutes"
+          title={
+            hasSyncError
+              ? `Sync error: ${metrics.last_sync_error} (click to retry)`
+              : 'Auto-updates when new orders arrive · Click to check now'
+          }
         >
           <span className="live-dot-wrap" aria-hidden="true">
-            <span className="live-dot-ping" />
-            <span className="live-dot-core" />
+            {!hasSyncError && <span className="live-dot-ping" />}
+            <span className={`live-dot-core ${hasSyncError ? 'is-error' : ''}`} />
           </span>
           <div className="live-sync-copy">
-            <span className="live-sync-title">Live Data Sync</span>
-            <span className="live-sync-sub">Auto-updates every 5 mins</span>
+            <span className={`live-sync-title ${hasSyncError ? 'is-error' : ''}`}>
+              {isChecking
+                ? 'Checking Orders...'
+                : hasSyncError
+                ? 'Sync Error · Click to Retry'
+                : 'Live Data Sync'}
+            </span>
+            <span className="live-sync-sub">
+              {hasSyncError
+                ? formattedTime
+                  ? `Could not fetch · Last: ${formattedTime}`
+                  : 'Could not fetch from database'
+                : formattedTime
+                ? `Last updated: ${formattedTime}`
+                : 'Syncing...'}
+            </span>
           </div>
-        </div>
+        </button>
       </div>
 
       <div className="overview-hub-grid">
-        {/* Top-Left: Total Revenue */}
         <button
           type="button"
           className="overview-stat-card accent-red overview-card-tl"
@@ -188,7 +258,6 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
           </div>
         </button>
 
-        {/* Center Hub: Interactive Round Pie Chart (4 Segments) */}
         <section
           className="overview-pie-hub"
           aria-label="Customer Group Share Pie Chart"
@@ -330,7 +399,6 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
           </div>
         </section>
 
-        {/* Top-Right: Total Orders */}
         <button
           type="button"
           className="overview-stat-card accent-blue overview-card-tr"
@@ -356,7 +424,6 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
           </div>
         </button>
 
-        {/* Bottom-Left: High Alert Guests */}
         <button
           type="button"
           className="overview-stat-card accent-brand overview-card-bl"
@@ -384,7 +451,6 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
           </div>
         </button>
 
-        {/* Bottom-Right: Message Delivered */}
         <button
           type="button"
           className="overview-stat-card accent-green overview-card-br"
@@ -413,7 +479,6 @@ export function OverviewPage({ snapshot, onNavigate, onSelectGroup }: OverviewPa
         </button>
       </div>
 
-      {/* Password Modal for Protected Total Revenue */}
       {showPinModal && (
         <div
           className="pin-overlay"

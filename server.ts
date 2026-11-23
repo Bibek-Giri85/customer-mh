@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { type Response } from 'express';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { createServer as createViteServer } from 'vite';
@@ -26,6 +26,22 @@ async function startServer() {
     'https://mothers-hut-frontend.vercel.app',
     process.env.FRONTEND_URL,
   ].filter(Boolean);
+
+  const sseClients = new Set<Response>();
+
+  const broadcastUpdate = (reason: string) => {
+    const payload = `event: updated\ndata: ${JSON.stringify({
+      reason,
+      at: new Date().toISOString(),
+    })}\n\n`;
+    for (const client of sseClients) {
+      try {
+        client.write(payload);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+  };
 
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -55,7 +71,7 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
 
   await initDatabase();
-  startSupabaseSyncLoop();
+  startSupabaseSyncLoop(() => broadcastUpdate('new_orders'));
 
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -65,9 +81,37 @@ async function startServer() {
     });
   });
 
+  app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    res.write(': connected\n\n');
+    sseClients.add(res);
+
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        clearInterval(keepAlive);
+        sseClients.delete(res);
+      }
+    }, 25000);
+
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      sseClients.delete(res);
+    });
+  });
+
   app.post('/api/sync', async (_req, res) => {
     try {
-      const syncInfo = await syncFromSupabase(true);
+      const syncInfo = await syncFromSupabase(false);
+      if (syncInfo.synced) {
+        broadcastUpdate('manual_sync');
+      }
       res.json({ ...syncInfo, snapshot: getDashboardSnapshot() });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -77,8 +121,17 @@ async function startServer() {
   app.get('/api/dashboard', async (req, res) => {
     try {
       const status = getSyncStatus();
-      if (status.supabase_configured && status.dataset_source === 'supabase:pending') {
-        await syncFromSupabase(true);
+      if (status.supabase_configured) {
+        try {
+          const syncRes = await syncFromSupabase(false);
+          if (syncRes.synced) {
+            broadcastUpdate('new_orders');
+          }
+        } catch (syncErr) {
+          if (status.dataset_source === 'supabase:pending') {
+            throw syncErr;
+          }
+        }
       }
 
       const snapshot = getDashboardSnapshot();
@@ -105,6 +158,7 @@ async function startServer() {
   app.post('/api/customers', (req, res) => {
     try {
       const result = upsertCustomer(req.body);
+      broadcastUpdate('customer_updated');
       res.json({
         ...result,
         avg_spend_per_visit_inr: result.customer.avg_spend_per_visit_inr,
@@ -119,6 +173,7 @@ async function startServer() {
     try {
       const items = Array.isArray(req.body) ? req.body : req.body?.records || req.body?.customers || [];
       const result = processBatchCustomers(items);
+      broadcastUpdate('batch_updated');
       res.json({
         ...result,
         snapshot: getDashboardSnapshot(),
@@ -133,6 +188,7 @@ async function startServer() {
       const csvText = String(req.body?.csvText || req.body?.csv_text || '');
       const mode = req.body?.mode === 'merge' ? 'merge' : 'replace';
       const result = importCustomersFromCsv(csvText, mode);
+      broadcastUpdate('csv_imported');
       res.json({ ...result, snapshot: getDashboardSnapshot() });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -142,6 +198,7 @@ async function startServer() {
   app.post('/api/ml/retrain', (_req, res) => {
     try {
       const result = retrainModelControlled();
+      broadcastUpdate('retrained');
       res.json({ ...result, snapshot: getDashboardSnapshot() });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -169,6 +226,7 @@ async function startServer() {
   app.post('/api/campaigns/send', async (req, res) => {
     try {
       const campaign = await sendSmsCampaignAsync(req.body);
+      broadcastUpdate('campaign_sent');
       res.json({
         campaign,
         snapshot: getDashboardSnapshot(),
@@ -183,6 +241,7 @@ async function startServer() {
   app.post('/api/campaigns/simulate', async (req, res) => {
     try {
       const campaign = await sendSmsCampaignAsync(req.body);
+      broadcastUpdate('campaign_sent');
       res.json({
         campaign,
         snapshot: getDashboardSnapshot(),
@@ -197,6 +256,7 @@ async function startServer() {
   app.post('/api/campaigns/reset', async (_req, res) => {
     try {
       await resetCampaignOperationsAsync();
+      broadcastUpdate('campaigns_reset');
       res.json({ ok: true, snapshot: getDashboardSnapshot() });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
