@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Navbar } from './components/Navbar';
-import { OverviewPage } from './components/OverviewPage';
+import { OverviewPage, type SyncNowResult } from './components/OverviewPage';
 import { api } from './services/api';
 import type {
   CampaignRecord,
@@ -151,22 +151,19 @@ export default function App() {
     };
   }, [fetchSnapshot, initialCache]);
 
-  const handleManualSync = useCallback(async () => {
-    try {
-      const res = await api.syncNow();
-      if (res?.snapshot?.metrics) {
-        setSnapshot(res.snapshot);
-        writeCachedSnapshot(res.snapshot);
-      }
-      showToast(
-        res.synced
-          ? `Synced ${res.orders_count} orders (${res.customers_count} guests).`
-          : 'Already up to date — no new orders.'
-      );
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Unable to check database.');
+  // Updates inline inside the Live Data Sync pill (no bottom toast popup)
+  const handleManualSync = useCallback(async (): Promise<SyncNowResult> => {
+    const res = await api.syncNow();
+    if (res?.snapshot?.metrics) {
+      setSnapshot(res.snapshot);
+      writeCachedSnapshot(res.snapshot);
     }
-  }, [showToast]);
+    return {
+      synced: res.synced,
+      orders_count: res.orders_count,
+      customers_count: res.customers_count,
+    };
+  }, []);
 
   const dispatchSmsCampaign = useCallback(
     async (payload: {

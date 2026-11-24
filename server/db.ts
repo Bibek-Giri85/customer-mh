@@ -40,6 +40,11 @@ let opsTablesReady = false;
 let lastSyncedSignature = '';
 let lastDataUpdatedAt: string | null = null;
 let lastSyncError: string | null = null;
+let syncInFlight: Promise<{
+  synced: boolean;
+  orders_count: number;
+  customers_count: number;
+}> | null = null;
 
 interface OpsState {
   phone_to_id: Record<string, string>;
@@ -89,6 +94,11 @@ function getPrimaryPool(): Pool | null {
       max: 5,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 15000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
+    });
+    primaryPool.on('error', (err) => {
+      console.warn('[Supabase Pool] Idle client error:', err.message);
     });
   }
   return primaryPool;
@@ -104,9 +114,34 @@ function getMasterPool(): Pool | null {
       max: 3,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 15000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
+    });
+    masterPool.on('error', (err) => {
+      console.warn('[Master Supabase Pool] Idle client error:', err.message);
     });
   }
   return masterPool;
+}
+
+async function queryWithRetry<T>(
+  pool: Pool,
+  sql: string,
+  params?: unknown[],
+  retries = 1
+): Promise<{ rows: T[] }> {
+  try {
+    return (await pool.query(sql, params)) as unknown as { rows: T[] };
+  } catch (err) {
+    const msg = (err as Error).message || '';
+    const isTransient =
+      /Connection terminated|ECONNRESET|ETIMEDOUT|timeout|socket hang up/i.test(msg);
+    if (retries > 0 && isTransient) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return queryWithRetry<T>(pool, sql, params, retries - 1);
+    }
+    throw err;
+  }
 }
 
 function loadLocalOpsState(): OpsState {
@@ -140,11 +175,9 @@ function loadLocalOpsState(): OpsState {
 function saveLocalOpsState(ops: OpsState): void {
   opsCache = ops;
   ensureDir();
-  try {
-    fs.writeFileSync(OPS_PATH, JSON.stringify(ops, null, 2), 'utf-8');
-  } catch {
+  void fs.promises.writeFile(OPS_PATH, JSON.stringify(ops), 'utf-8').catch(() => {
     // ignore read-only fs errors
-  }
+  });
 }
 
 async function ensureOpsTables(pool: Pool): Promise<void> {
@@ -785,7 +818,7 @@ function executeMlPipelineOnState(
   return run;
 }
 
-export async function syncFromSupabase(force = false): Promise<{
+async function runSyncFromSupabase(force = false): Promise<{
   synced: boolean;
   orders_count: number;
   customers_count: number;
@@ -803,11 +836,12 @@ export async function syncFromSupabase(force = false): Promise<{
   const tableName = sanitizeTableName(process.env.SUPABASE_TABLE_NAME || 'orders');
 
   try {
-    const checkRes = await pool.query<{
+    const checkRes = await queryWithRetry<{
       total_count: number;
       latest_ts: string | null;
       total_sum: string | null;
     }>(
+      pool,
       `SELECT
          COUNT(*)::int AS total_count,
          to_char(MAX(ordered_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_ts,
@@ -837,7 +871,8 @@ export async function syncFromSupabase(force = false): Promise<{
     }
 
     console.log(`[Supabase] Fetching rows from public."${tableName}"...`);
-    const { rows } = await pool.query<RawSupabaseOrderRow>(
+    const { rows } = await queryWithRetry<RawSupabaseOrderRow>(
+      pool,
       `SELECT * FROM public."${tableName}" ORDER BY ordered_at ASC NULLS LAST`
     );
 
@@ -873,7 +908,7 @@ export async function syncFromSupabase(force = false): Promise<{
     }
     ops.processing_logs = nextState.processing_logs;
     saveLocalOpsState(ops);
-    await saveOpsMetaToSupabase(ops);
+    void saveOpsMetaToSupabase(ops);
 
     dbCache = nextState;
     lastSyncedSignature = signature;
@@ -894,6 +929,18 @@ export async function syncFromSupabase(force = false): Promise<{
   }
 }
 
+export async function syncFromSupabase(force = false): Promise<{
+  synced: boolean;
+  orders_count: number;
+  customers_count: number;
+}> {
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = runSyncFromSupabase(force).finally(() => {
+    syncInFlight = null;
+  });
+  return syncInFlight;
+}
+
 export function getSyncStatus() {
   return {
     supabase_configured: isSupabaseConfigured(),
@@ -908,22 +955,24 @@ export function getSyncStatus() {
   };
 }
 
-export async function initDatabase(): Promise<DatabaseState> {
+export async function initDatabase(onSynced?: () => void): Promise<DatabaseState> {
+  const state = loadDatabase();
   if (isSupabaseConfigured()) {
-    try {
-      const result = await syncFromSupabase(true);
-      console.log(
-        `[Supabase] Sync complete: ${result.orders_count} orders -> ${result.customers_count} guests.`
-      );
-      return loadDatabase();
-    } catch (err) {
-      lastSyncError = (err as Error).message;
-      console.error('[Supabase ERROR] Startup sync failed:', lastSyncError);
-    }
+    void syncFromSupabase(true)
+      .then((result) => {
+        console.log(
+          `[Supabase] Sync complete: ${result.orders_count} orders -> ${result.customers_count} guests.`
+        );
+        onSynced?.();
+      })
+      .catch((err) => {
+        lastSyncError = (err as Error).message;
+        console.error('[Supabase ERROR] Startup sync failed:', lastSyncError);
+      });
   } else {
     console.warn('[Supabase] DATABASE_URL not found in environment; using local dataset.');
   }
-  return loadDatabase();
+  return state;
 }
 
 export function startSupabaseSyncLoop(onSynced?: () => void): void {
@@ -1034,16 +1083,15 @@ export function loadDatabase(): DatabaseState {
 export function saveDatabase(): void {
   if (!dbCache) return;
   ensureDir();
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(dbCache, null, 2), 'utf-8');
-    const ops = loadLocalOpsState();
-    ops.campaigns = dbCache.campaigns;
-    ops.birthday_offers = dbCache.birthday_offers;
-    ops.processing_logs = dbCache.processing_logs;
-    saveLocalOpsState(ops);
-  } catch {
+  const snapshotCopy = dbCache;
+  void fs.promises.writeFile(DB_PATH, JSON.stringify(snapshotCopy), 'utf-8').catch(() => {
     // ignore read-only fs errors
-  }
+  });
+  const ops = loadLocalOpsState();
+  ops.campaigns = snapshotCopy.campaigns;
+  ops.birthday_offers = snapshotCopy.birthday_offers;
+  ops.processing_logs = snapshotCopy.processing_logs;
+  saveLocalOpsState(ops);
 }
 
 export function addProcessingLog(

@@ -462,7 +462,7 @@ h1 {
   line-height: 1.42;
 }
 
-/* ================= LIVE DATA SYNC BADGE (BLINKING GREEN DOT + ERROR STATE) ================= */
+/* ================= LIVE DATA SYNC BADGE (INLINE FEEDBACK + ERROR STATE) ================= */
 .live-sync-pill {
   display: inline-flex;
   align-items: center;
@@ -473,12 +473,18 @@ h1 {
   border: 1px solid #b7e3cb;
   box-shadow: 0 2px 8px rgba(5, 150, 105, 0.08);
   flex-shrink: 0;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.16s ease, box-shadow 0.16s ease;
 }
 
 .live-sync-pill:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 5px 14px rgba(5, 150, 105, 0.13);
+}
+
+.live-sync-pill.is-done {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  box-shadow: 0 4px 14px rgba(5, 150, 105, 0.14);
 }
 
 .live-sync-pill.is-error {
@@ -555,6 +561,24 @@ h1 {
   font-weight: 500;
   color: var(--text-muted);
   margin-top: 2px;
+}
+
+.live-refresh-ic {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(5, 150, 105, 0.11);
+  color: var(--green-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.live-sync-pill.is-error .live-refresh-ic {
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--red-alert-dark);
 }
 
 .kpi-card {
@@ -1301,7 +1325,7 @@ h1 {
   box-shadow: 0 8px 20px var(--seg-shadow);
 }
 
-/* ================= GROUP PROFILES TAB (COMPACT 2x2 SINGLE-VIEW & 3-IN-1-ROW TILES) ================= */
+/* ================= GROUP PROFILES TAB ================= */
 .profiles-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2360,6 +2384,10 @@ h1 {
   }
   .live-sync-pill {
     width: 100%;
+    justify-content: space-between;
+  }
+  .live-sync-copy {
+    flex: 1;
   }
   .mh-skeleton-grid {
     grid-template-columns: 1fr;

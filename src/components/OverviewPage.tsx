@@ -1,21 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
   IndianRupee,
   Lock,
   MessageSquare,
+  RefreshCw,
   ShoppingBag,
   Unlock,
 } from 'lucide-react';
 import type { DashboardSnapshot, NavTab } from '../types';
 import { formatINR, REVENUE_PASSWORD } from '../utils/formatters';
 
+export interface SyncNowResult {
+  synced: boolean;
+  orders_count: number;
+  customers_count: number;
+}
+
 interface OverviewPageProps {
   snapshot: DashboardSnapshot;
   onNavigate: (tab: NavTab) => void;
   onSelectGroup: (cid: number) => void;
-  onSyncNow?: () => Promise<void> | void;
+  onSyncNow?: () => Promise<SyncNowResult | void> | void;
 }
 
 const REVENUE_UNLOCK_SECONDS = 10;
@@ -77,8 +84,35 @@ export function OverviewPage({
   const [showPinModal, setShowPinModal] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
+
   const [hoveredCid, setHoveredCid] = useState<number | null>(null);
+  const [isTouchMode, setIsTouchMode] = useState(false);
+  const pieHubRef = useRef<HTMLElement | null>(null);
+
   const [isChecking, setIsChecking] = useState(false);
+  const [pillNotice, setPillNotice] = useState<{
+    tone: 'success' | 'error';
+    title: string;
+    sub: string;
+  } | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hoveredCid === null || !isTouchMode) return;
+    const handleOutsideTouch = (e: TouchEvent) => {
+      if (pieHubRef.current && !pieHubRef.current.contains(e.target as Node)) {
+        setHoveredCid(null);
+      }
+    };
+    document.addEventListener('touchstart', handleOutsideTouch, { passive: true });
+    return () => document.removeEventListener('touchstart', handleOutsideTouch);
+  }, [hoveredCid, isTouchMode]);
 
   useEffect(() => {
     if (!revenueUnlocked) return;
@@ -106,11 +140,47 @@ export function OverviewPage({
   const handlePillClick = async () => {
     if (!onSyncNow || isChecking) return;
     setIsChecking(true);
+    setPillNotice(null);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+
     try {
-      await onSyncNow();
+      const res = await onSyncNow();
+      if (res && typeof res === 'object' && 'synced' in res) {
+        setPillNotice({
+          tone: 'success',
+          title: res.synced ? '✓ Synced New Orders' : '✓ Up to date',
+          sub: res.synced
+            ? `${res.orders_count.toLocaleString()} orders · ${res.customers_count.toLocaleString()} guests`
+            : `No new orders · ${res.orders_count.toLocaleString()} synced`,
+        });
+      } else {
+        setPillNotice({
+          tone: 'success',
+          title: '✓ Up to date',
+          sub: `${metrics.total_orders.toLocaleString()} orders synced`,
+        });
+      }
+
+      noticeTimerRef.current = setTimeout(() => {
+        setPillNotice(null);
+      }, 2800);
+    } catch (err) {
+      setPillNotice({
+        tone: 'error',
+        title: 'Sync Error · Retry',
+        sub: err instanceof Error ? err.message : 'Could not fetch from database',
+      });
     } finally {
       setIsChecking(false);
     }
+  };
+
+  const handleSliceOrLegendClick = (cid: number) => {
+    if (isTouchMode && hoveredCid !== cid) {
+      setHoveredCid(cid);
+      return;
+    }
+    onSelectGroup(cid);
   };
 
   const pieSlices = useMemo(() => {
@@ -172,7 +242,8 @@ export function OverviewPage({
     [pieSlices, hoveredCid]
   );
 
-  const hasSyncError = Boolean(metrics.last_sync_error);
+  const hasSyncError = pillNotice?.tone === 'error' || Boolean(metrics.last_sync_error);
+  const isDoneNotice = pillNotice?.tone === 'success';
   const formattedTime = formatSyncTime(metrics.last_sync_at);
 
   return (
@@ -189,12 +260,14 @@ export function OverviewPage({
           type="button"
           onClick={() => void handlePillClick()}
           disabled={isChecking}
-          className={`live-sync-pill text-left cursor-pointer ${hasSyncError ? 'is-error' : ''}`}
+          className={`live-sync-pill text-left cursor-pointer ${
+            hasSyncError ? 'is-error' : isDoneNotice ? 'is-done' : ''
+          }`}
           role="status"
           aria-live="polite"
           title={
             hasSyncError
-              ? `Sync error: ${metrics.last_sync_error} (click to retry)`
+              ? `Sync error: ${metrics.last_sync_error || pillNotice?.sub} (click to retry)`
               : 'Auto-updates when new orders arrive · Click to check now'
           }
         >
@@ -206,12 +279,18 @@ export function OverviewPage({
             <span className={`live-sync-title ${hasSyncError ? 'is-error' : ''}`}>
               {isChecking
                 ? 'Checking Orders...'
+                : pillNotice
+                ? pillNotice.title
                 : hasSyncError
                 ? 'Sync Error · Click to Retry'
                 : 'Live Data Sync'}
             </span>
             <span className="live-sync-sub">
-              {hasSyncError
+              {isChecking
+                ? 'Checking database...'
+                : pillNotice
+                ? pillNotice.sub
+                : hasSyncError
                 ? formattedTime
                   ? `Could not fetch · Last: ${formattedTime}`
                   : 'Could not fetch from database'
@@ -220,6 +299,9 @@ export function OverviewPage({
                 : 'Syncing...'}
             </span>
           </div>
+          <span className="live-refresh-ic" aria-hidden="true">
+            <RefreshCw size={13} className={isChecking ? 'animate-spin' : ''} />
+          </span>
         </button>
       </div>
 
@@ -259,9 +341,13 @@ export function OverviewPage({
         </button>
 
         <section
+          ref={pieHubRef}
           className="overview-pie-hub"
           aria-label="Customer Group Share Pie Chart"
-          onMouseLeave={() => setHoveredCid(null)}
+          onTouchStart={() => setIsTouchMode(true)}
+          onMouseLeave={() => {
+            if (!isTouchMode) setHoveredCid(null);
+          }}
         >
           <div className="w-full flex items-center justify-between gap-2">
             <span className="kpi-label" style={{ color: 'var(--brand)' }}>
@@ -296,9 +382,11 @@ export function OverviewPage({
                       transition:
                         'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease, filter 0.2s ease',
                     }}
-                    onMouseEnter={() => setHoveredCid(slice.cluster_id)}
+                    onMouseEnter={() => {
+                      if (!isTouchMode) setHoveredCid(slice.cluster_id);
+                    }}
                     onFocus={() => setHoveredCid(slice.cluster_id)}
-                    onClick={() => onSelectGroup(slice.cluster_id)}
+                    onClick={() => handleSliceOrLegendClick(slice.cluster_id)}
                   >
                     <path
                       d={slice.path}
@@ -347,6 +435,14 @@ export function OverviewPage({
                   <span className="text-[10.5px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                     {activeSlice.customer_count.toLocaleString()} guests
                   </span>
+                  {isTouchMode && (
+                    <span
+                      className="text-[9.5px] font-semibold mt-1"
+                      style={{ color: activeSlice.color }}
+                    >
+                      Tap again →
+                    </span>
+                  )}
                 </>
               ) : (
                 <>
@@ -363,7 +459,7 @@ export function OverviewPage({
                     {metrics.total_customers.toLocaleString()}
                   </span>
                   <span className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    Hover a slice
+                    {isTouchMode ? 'Tap a slice' : 'Hover a slice'}
                   </span>
                 </>
               )}
@@ -379,8 +475,10 @@ export function OverviewPage({
                   type="button"
                   className={`overview-legend-pill ${isActive ? 'is-active' : ''}`}
                   style={{ '--pill-color': slice.color } as React.CSSProperties}
-                  onMouseEnter={() => setHoveredCid(slice.cluster_id)}
-                  onClick={() => onSelectGroup(slice.cluster_id)}
+                  onMouseEnter={() => {
+                    if (!isTouchMode) setHoveredCid(slice.cluster_id);
+                  }}
+                  onClick={() => handleSliceOrLegendClick(slice.cluster_id)}
                   title={`Message ${slice.cluster_name} (${slice.customer_share_pct}%)`}
                 >
                   <span className="flex items-center gap-1.5 min-w-0">
